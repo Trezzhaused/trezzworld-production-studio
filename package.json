@@ -1,0 +1,9 @@
+{
+  "name":"trezzworld-production-studio",
+  "version":"0.1.0-alpha",
+  "private":true,
+  "scripts":{
+    "dev":"echo Configure Electron+React",
+    "build":"echo Build placeholder"
+  }
+}

@@ -1,2 +1,3 @@
-# trezzworld-production-studio
-Ai Studio for all Creations imaginable
+# TrezzWorld Production Studio
+
+Offline-first creative suite.
