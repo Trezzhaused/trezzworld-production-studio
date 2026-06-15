@@ -1,2 +1,25 @@
 appId: com.trezzworld.productionstudio
 productName: TrezzWorld Production Studio
+copyright: Copyright © 2024 TrezzWorld
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - package.json
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+
+win:
+  target:
+    - nsis
+
+linux:
+  target:
+    - AppImage
+
