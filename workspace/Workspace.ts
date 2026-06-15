@@ -1,0 +1,3 @@
+export interface WorkspaceProject{ id:string; name:string; path:string; }
+export interface WorkspaceModel{ id:string; name:string; projects:WorkspaceProject[]; activeProjectId?:string; metadata?:Record<string,unknown>; }
+export class Workspace{ constructor(private model:WorkspaceModel){} getModel(){return this.model;} addProject(project:WorkspaceProject){this.model.projects.push(project);} setActiveProject(id:string){this.model.activeProjectId=id;} serialize():string{return JSON.stringify(this.model,null,2);} static deserialize(json:string){return new Workspace(JSON.parse(json));}}
