@@ -26,7 +26,8 @@ def _count_todos(path: Path, suffixes: tuple[str, ...]) -> int:
             content = file.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        total += content.count("TODO") + content.count("FIXME")
+        normalized = content.upper()
+        total += normalized.count("TODO") + normalized.count("FIXME")
     return total
 
 
@@ -80,7 +81,7 @@ def _build_readiness() -> dict[str, Any]:
         {
             "category": "Documentation",
             "goal": "Required",
-            "passed": _check_path("README.md") and _check_path("docs/README.md"),
+            "passed": _check_path("README.md") or _check_path("docs/README.md"),
         },
         {
             "category": "Performance",

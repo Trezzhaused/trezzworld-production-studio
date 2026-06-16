@@ -51,27 +51,41 @@ export default function App() {
   const [loadingMeta, setLoadingMeta] = useState(true);
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/status')
+    const backendController = new AbortController();
+    const metaController = new AbortController();
+
+    fetch('http://localhost:8000/api/status', { signal: backendController.signal })
       .then((res) => res.json())
       .then((data: BackendStatus) => {
         setBackendStatus(data);
         setLoadingBackend(false);
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          return;
+        }
         setBackendStatus(null);
         setLoadingBackend(false);
       });
 
-    fetch('http://localhost:8000/api/meta-development/status')
+    fetch('http://localhost:8000/api/meta-development/status', { signal: metaController.signal })
       .then((res) => res.json())
       .then((data: MetaDevelopmentStatus) => {
         setMetaStatus(data);
         setLoadingMeta(false);
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          return;
+        }
         setMetaStatus(null);
         setLoadingMeta(false);
       });
+
+    return () => {
+      backendController.abort();
+      metaController.abort();
+    };
   }, []);
 
   return (
