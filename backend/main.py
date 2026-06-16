@@ -475,6 +475,83 @@ def image_generate(payload: ImageGenerateRequest):
 
 
 # ---------------------------------------------------------------------------
+# Roblox Game Suite — LUMI-driven game creation with Luau scripts + ZIP export
+# ---------------------------------------------------------------------------
+
+class RobloxCreateRequest(BaseModel):
+    concept: str
+    genre: str = "Adventure"
+    maxPlayers: int = 20
+    monetization: str = "freemium"
+
+
+@app.post("/api/roblox/game/create")
+def roblox_game_create(payload: RobloxCreateRequest):
+    """
+    Start an AI-driven Roblox game creation job.
+    LUMI generates a full game design document + Luau scripts + Rojo project ZIP.
+    Poll /api/roblox/game/{job_id}/status for progress.
+    """
+    from .roblox_creator import create_roblox_job  # noqa: PLC0415
+    job = create_roblox_job(
+        concept=payload.concept,
+        genre=payload.genre,
+        max_players=payload.maxPlayers,
+        monetization=payload.monetization,
+    )
+    return job.to_dict()
+
+
+@app.get("/api/roblox/game/{job_id}/status")
+def roblox_game_status(job_id: str):
+    """Poll the status of a Roblox game creation job."""
+    from .roblox_creator import get_roblox_job  # noqa: PLC0415
+    job = get_roblox_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Roblox job '{job_id}' not found.")
+    return job.to_dict()
+
+
+@app.get("/api/roblox/game/{job_id}/download")
+def roblox_game_download(job_id: str):
+    """Download the Rojo-compatible ZIP package for a completed Roblox game job."""
+    from .roblox_creator import get_roblox_output_path  # noqa: PLC0415
+    path = get_roblox_output_path(job_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Game package not ready or job not found.")
+    return FileResponse(path=str(path), media_type="application/zip", filename=path.name)
+
+
+@app.get("/api/roblox/game/{job_id}/scripts")
+def roblox_game_scripts(job_id: str):
+    """Return the generated Luau scripts for a completed Roblox game job."""
+    from .roblox_creator import get_roblox_job  # noqa: PLC0415
+    job = get_roblox_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Roblox job '{job_id}' not found.")
+    if job.status not in ("packaging", "done"):
+        raise HTTPException(status_code=409, detail=f"Scripts not ready yet. Status: {job.status}")
+    return {"jobId": job_id, "scripts": job.scripts}
+
+
+@app.get("/api/roblox/game/{job_id}/design")
+def roblox_game_design(job_id: str):
+    """Return the full game design document for a Roblox game job."""
+    from .roblox_creator import get_roblox_job  # noqa: PLC0415
+    job = get_roblox_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Roblox job '{job_id}' not found.")
+    return {"jobId": job_id, "designDoc": job.design_doc}
+
+
+@app.get("/api/roblox/games")
+def roblox_games_list():
+    """List all Roblox game creation jobs."""
+    from .roblox_creator import list_roblox_jobs  # noqa: PLC0415
+    return {"jobs": list_roblox_jobs()}
+
+
+# ---------------------------------------------------------------------------
 # Static file serving — serve the built React UI at /
 # Must be registered AFTER all API routes so /api/* is not intercepted.
 # ---------------------------------------------------------------------------
