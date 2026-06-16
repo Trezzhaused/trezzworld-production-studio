@@ -36,38 +36,51 @@ OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 # ---------------------------------------------------------------------------
 _CASCADE: list[dict[str, Any]] = [
     # ── Free tier ──────────────────────────────────────────────────────────
-    {"id": "google/gemini-2.0-flash-exp:free",        "tier": "free",     "pri": 1},
-    {"id": "google/gemini-flash-1.5-8b:free",         "tier": "free",     "pri": 2},
-    {"id": "deepseek/deepseek-r1:free",               "tier": "free",     "pri": 3},
-    {"id": "meta-llama/llama-3.1-8b-instruct:free",   "tier": "free",     "pri": 4},
-    {"id": "mistralai/mistral-7b-instruct:free",      "tier": "free",     "pri": 5},
-    {"id": "qwen/qwen-2-7b-instruct:free",            "tier": "free",     "pri": 6},
+    {"id": "google/gemini-2.0-flash-exp:free",              "tier": "free",     "pri": 1},
+    {"id": "google/gemini-2.5-flash:free",                  "tier": "free",     "pri": 2},
+    {"id": "google/gemma-3-27b-it:free",                    "tier": "free",     "pri": 3},
+    {"id": "google/gemma-3-12b-it:free",                    "tier": "free",     "pri": 4},
+    {"id": "google/gemini-flash-1.5-8b:free",               "tier": "free",     "pri": 5},
+    {"id": "deepseek/deepseek-r1:free",                     "tier": "free",     "pri": 6},
+    {"id": "deepseek/deepseek-chat-v3-0324:free",           "tier": "free",     "pri": 7},
+    {"id": "meta-llama/llama-3.3-70b-instruct:free",        "tier": "free",     "pri": 8},
+    {"id": "meta-llama/llama-3.1-8b-instruct:free",         "tier": "free",     "pri": 9},
+    {"id": "mistralai/mistral-7b-instruct:free",            "tier": "free",     "pri": 10},
+    {"id": "qwen/qwen3-8b:free",                            "tier": "free",     "pri": 11},
+    {"id": "qwen/qwen-2-7b-instruct:free",                  "tier": "free",     "pri": 12},
+    {"id": "microsoft/phi-4-reasoning:free",                "tier": "free",     "pri": 13},
+    {"id": "nousresearch/hermes-3-llama-3.1-8b:free",       "tier": "free",     "pri": 14},
     # ── Low-cost paid ──────────────────────────────────────────────────────
-    {"id": "google/gemini-flash-1.5",                 "tier": "low-cost", "pri": 7},
-    {"id": "anthropic/claude-3-haiku",                "tier": "low-cost", "pri": 8},
-    {"id": "openai/gpt-4o-mini",                      "tier": "low-cost", "pri": 9},
-    {"id": "mistralai/mistral-nemo",                  "tier": "low-cost", "pri": 10},
+    {"id": "google/gemini-flash-1.5",                       "tier": "low-cost", "pri": 15},
+    {"id": "anthropic/claude-3-haiku",                      "tier": "low-cost", "pri": 16},
+    {"id": "openai/gpt-4o-mini",                            "tier": "low-cost", "pri": 17},
+    {"id": "mistralai/mistral-nemo",                        "tier": "low-cost", "pri": 18},
     # ── Premium fallback ───────────────────────────────────────────────────
-    {"id": "anthropic/claude-sonnet-4.6",             "tier": "premium",  "pri": 11},
-    {"id": "openai/gpt-5.5",                          "tier": "premium",  "pri": 12},
-    {"id": "google/gemini-3.1-flash-lite",            "tier": "premium",  "pri": 13},
-    {"id": "deepseek/deepseek-v4-pro",                "tier": "premium",  "pri": 14},
-    {"id": "x-ai/grok-4.3",                          "tier": "premium",  "pri": 15},
+    {"id": "anthropic/claude-sonnet-4.6",                   "tier": "premium",  "pri": 19},
+    {"id": "openai/gpt-5.5",                                "tier": "premium",  "pri": 20},
+    {"id": "google/gemini-3.1-flash-lite",                  "tier": "premium",  "pri": 21},
+    {"id": "deepseek/deepseek-v4-pro",                      "tier": "premium",  "pri": 22},
+    {"id": "x-ai/grok-4.3",                                 "tier": "premium",  "pri": 23},
 ]
 
 # Per-role preferred model lists (free-first within role)
 _ROLE_MODELS: dict[str, list[str]] = {
     "planner": [
+        "google/gemini-2.5-flash:free",
         "google/gemini-2.0-flash-exp:free",
         "deepseek/deepseek-r1:free",
-        "meta-llama/llama-3.1-8b-instruct:free",
+        "google/gemma-3-27b-it:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
         "google/gemini-flash-1.5",
         "anthropic/claude-3-haiku",
         "anthropic/claude-sonnet-4.6",
     ],
     "executor": [
+        "google/gemini-2.5-flash:free",
         "google/gemini-2.0-flash-exp:free",
         "deepseek/deepseek-r1:free",
+        "deepseek/deepseek-chat-v3-0324:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
         "mistralai/mistral-7b-instruct:free",
         "google/gemini-flash-1.5",
         "openai/gpt-4o-mini",
@@ -76,21 +89,30 @@ _ROLE_MODELS: dict[str, list[str]] = {
     "scorer": [
         "google/gemini-flash-1.5-8b:free",
         "mistralai/mistral-7b-instruct:free",
+        "qwen/qwen3-8b:free",
         "qwen/qwen-2-7b-instruct:free",
         "google/gemini-flash-1.5",
         "anthropic/claude-3-haiku",
     ],
     "lumi": [
+        "google/gemini-2.5-flash:free",
         "google/gemini-2.0-flash-exp:free",
+        "google/gemma-3-27b-it:free",
         "deepseek/deepseek-r1:free",
+        "deepseek/deepseek-chat-v3-0324:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
         "meta-llama/llama-3.1-8b-instruct:free",
+        "qwen/qwen3-8b:free",
+        "microsoft/phi-4-reasoning:free",
         "google/gemini-flash-1.5",
         "anthropic/claude-3-haiku",
         "anthropic/claude-sonnet-4.6",
         "openai/gpt-5.5",
     ],
     "researcher": [  # harness-style proposer (jailbreak-autoresearch pattern)
+        "google/gemini-2.5-flash:free",
         "deepseek/deepseek-r1:free",
+        "google/gemma-3-27b-it:free",
         "google/gemini-2.0-flash-exp:free",
         "anthropic/claude-sonnet-4.6",
         "openai/gpt-5.5",
@@ -462,10 +484,11 @@ class AIRouter:
         Maintains conversation history for multi-turn sessions.
 
         Priority order:
-          1. Local Ollama (if use_ollama=True)
+          1. Local Ollama — auto-used when use_ollama=True OR when no OPENROUTER_API_KEY is set
           2. OpenRouter free-tier cascade (OPENROUTER_API_KEY)
           3. User-provided provider keys (openrouter → google → openai → anthropic)
-          4. Helpful exhausted message with upgrade guidance
+          4. Ollama last-resort (when API key was set but full cascade failed)
+          5. Helpful exhausted message with upgrade guidance
 
         Args:
             user_message: The user's message.
@@ -486,17 +509,19 @@ class AIRouter:
             messages.extend(history[-20:])
         messages.append({"role": "user", "content": user_message})
 
-        # 1. Route to local Ollama when requested
-        if use_ollama:
-            from .ollama_provider import get_ollama  # noqa: PLC0415
-            ollama = get_ollama()
-            if ollama_model:
-                result = ollama.chat(ollama_model, messages, temperature=0.72, max_tokens=1200)
-            else:
-                result = ollama.super_gemma_chat(messages, temperature=0.72, max_tokens=1200)
-            if result.ok:
-                return ChatResult(model=result.model, content=result.content, ok=True, usage=result.usage)
-            # Fall through to OpenRouter if Ollama fails
+        # 1. Route to local Ollama when requested OR when no API key is configured
+        from .ollama_provider import get_ollama  # noqa: PLC0415
+        ollama = get_ollama()
+        if use_ollama or not self.api_key:
+            ollama_available = ollama.is_available()
+            if ollama_available:
+                if ollama_model:
+                    oll_result = ollama.chat(ollama_model, messages, temperature=0.72, max_tokens=1200)
+                else:
+                    oll_result = ollama.super_gemma_chat(messages, temperature=0.72, max_tokens=1200)
+                if oll_result.ok:
+                    return ChatResult(model=oll_result.model, content=oll_result.content, ok=True, usage=oll_result.usage)
+            # Ollama unavailable or failed — fall through to OpenRouter
 
         # 2. OpenRouter cascade (system key)
         result = self.chat(messages, role="lumi", temperature=0.72, max_tokens=1200)
@@ -508,7 +533,14 @@ class AIRouter:
         if user_result.ok:
             return user_result
 
-        # 4. All sources exhausted — return helpful guidance as LUMI response
+        # 4. Auto-try Ollama as last resort (when use_ollama=False and key was set but cascade failed)
+        if not use_ollama and self.api_key:
+            if ollama.is_available():
+                oll_result = ollama.super_gemma_chat(messages, temperature=0.72, max_tokens=1200)
+                if oll_result.ok:
+                    return ChatResult(model=oll_result.model, content=oll_result.content, ok=True, usage=oll_result.usage)
+
+        # 5. All sources exhausted — return helpful guidance as LUMI response
         return ChatResult(
             model="none",
             content=_build_exhausted_message(),
@@ -572,7 +604,16 @@ def _build_exhausted_message() -> str:
         "I've temporarily run out of AI resources. All model sources in my cascade have been exhausted.",
         "Here's how to get me back online:\n",
         "─────────────────────────────────────────",
-        "OPTION 1 — Add your own AI account key (fastest fix)",
+        "OPTION 1 — Run Ollama locally (100% FREE, no account needed) ⭐",
+        "─────────────────────────────────────────",
+        "Install Ollama: https://ollama.com/download",
+        "Then run these two commands in your terminal:",
+        "  ollama serve",
+        "  ollama pull gemma3:27b",
+        "Once Ollama is running, switch to '🖥️ Ollama (local)' in the AI Models tab,",
+        "or just ask me anything — I'll automatically use it when available.\n",
+        "─────────────────────────────────────────",
+        "OPTION 2 — Add your own AI account key",
         "─────────────────────────────────────────",
     ]
 
@@ -585,16 +626,17 @@ def _build_exhausted_message() -> str:
         lines.append("")
 
     lines += [
-        "Once you have a key, connect it via:",
+        "Once you have a key, go to the 🤖 AI Models tab → API Keys section and add it there.",
+        "Or connect it directly via:",
         "  POST http://127.0.0.1:8000/api/lumi/user-key",
         '  Body: {"provider": "openrouter", "api_key": "sk-or-..."}\n',
         "─────────────────────────────────────────",
-        "OPTION 2 — Check back in 12 hours",
+        "OPTION 3 — Check back in 12 hours",
         "─────────────────────────────────────────",
         "Free-tier rate limits reset within 24 hours.",
         "Come back later and I'll pick up right where we left off.\n",
         "─────────────────────────────────────────",
-        "OPTION 3 — Upgrade via OpenRouter (lowest cost)",
+        "OPTION 4 — Upgrade via OpenRouter (lowest cost)",
         "─────────────────────────────────────────",
         "Add $5 credit at https://openrouter.ai — that's thousands of messages",
         "using Gemini Flash or Llama models. No subscription required.",
