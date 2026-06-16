@@ -26,6 +26,7 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
         run: |
           if [ -z "$RAILWAY_TOKEN" ]; then
             echo "::error::RAILWAY_TOKEN secret is not configured."
@@ -33,10 +34,11 @@ jobs:
             echo "::error::Name: RAILWAY_TOKEN  Value: your Railway project token (railway.com → Project → Settings → Tokens)"
             exit 1
           fi
-          if [ -z "$RAILWAY_SERVICE" ]; then
-            echo "::error::RAILWAY_SERVICE secret is not configured."
+          TARGET_SERVICE="${RAILWAY_SERVICE_ID:-$RAILWAY_SERVICE}"
+          if [ -z "$TARGET_SERVICE" ]; then
+            echo "::error::RAILWAY_SERVICE or RAILWAY_SERVICE_ID secret is not configured."
             echo "::error::Add it at: Settings → Secrets and variables → Actions → New repository secret"
-            echo "::error::Name: RAILWAY_SERVICE  Value: the Railway service name to deploy (railway.com → Project → <service name>)"
+            echo "::error::Name: RAILWAY_SERVICE (service name) or RAILWAY_SERVICE_ID (service id)"
             exit 1
           fi
 
@@ -45,4 +47,12 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE }}
-        run: railway up --service "$RAILWAY_SERVICE" --detach
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+        run: |
+          TARGET_SERVICE="${RAILWAY_SERVICE_ID:-$RAILWAY_SERVICE}"
+          if [ -n "$RAILWAY_PROJECT_ID" ]; then
+            railway up --project "$RAILWAY_PROJECT_ID" --service "$TARGET_SERVICE" --detach
+          else
+            railway up --service "$TARGET_SERVICE" --detach
+          fi
