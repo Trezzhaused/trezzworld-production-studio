@@ -636,7 +636,7 @@ export default function App() {
                   </div>
                   <p style={{ margin: '8px 0 0', opacity: 0.78 }}>
                     {job.workerId} · {job.stage} · {(job.targetFiles ?? []).length} file(s)
-                    {job.score != null && ` · score ${job.score.toFixed(2)}`}
+                    {job.score !== null && job.score !== undefined && ` · score ${job.score.toFixed(2)}`}
                   </p>
                   {job.error && (
                     <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#fca5a5' }}>{job.error}</p>
