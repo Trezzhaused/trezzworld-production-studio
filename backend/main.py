@@ -1,3 +1,4 @@
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -11,7 +12,12 @@ app = FastAPI(title=f"{APP_NAME} API", version=VERSION)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "https://app.trezzhaus.com",
+    ],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
@@ -307,3 +313,97 @@ def video_jobs():
     """List all video creation jobs."""
     from .video_creator import list_video_jobs  # noqa: PLC0415
     return {"jobs": list_video_jobs()}
+
+
+# ---------------------------------------------------------------------------
+# Music Generator — AI composition briefs
+# ---------------------------------------------------------------------------
+
+class MusicGenerateRequest(BaseModel):
+    concept: str
+    genre: str = "cinematic"
+    durationSeconds: int = 60
+    bpm: int = 120
+    mood: str = "epic"
+
+
+@app.post("/api/music/generate")
+def music_generate(payload: MusicGenerateRequest):
+    """Generate a detailed music composition brief using LUMI."""
+    from .ai_router import get_router  # noqa: PLC0415
+    router = get_router()
+    prompt = (
+        f"Compose a detailed music production brief for: {payload.concept}\n"
+        f"Genre: {payload.genre}, BPM: {payload.bpm}, Mood: {payload.mood}, "
+        f"Duration: {payload.durationSeconds}s\n\n"
+        "Provide:\n"
+        "1. Track title\n"
+        "2. Full arrangement (intro/verse/chorus/bridge/outro with timestamps)\n"
+        "3. Instrument list with specific articulations\n"
+        "4. Sound design notes\n"
+        "5. Mixing/mastering targets (LUFS, dynamics)\n"
+        "6. Lyrics or vocal notes if applicable\n"
+        "7. Reference tracks\n"
+        "Format as a professional studio session document."
+    )
+    result = router.lumi_chat(prompt, domain="music")
+    return {
+        "concept": payload.concept,
+        "genre": payload.genre,
+        "bpm": payload.bpm,
+        "mood": payload.mood,
+        "durationSeconds": payload.durationSeconds,
+        "composition": result.content if result.ok else f"LUMI unavailable: {result.error}",
+        "model": result.model,
+        "ok": result.ok,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Image Generator — AI prompt engineering for image synthesis
+# ---------------------------------------------------------------------------
+
+class ImageGenerateRequest(BaseModel):
+    concept: str
+    style: str = "photorealistic"
+    aspectRatio: str = "16:9"
+    count: int = 4
+
+
+@app.post("/api/image/generate")
+def image_generate(payload: ImageGenerateRequest):
+    """Generate detailed image prompts for Stable Diffusion / Midjourney / DALL-E."""
+    from .ai_router import get_router  # noqa: PLC0415
+    router = get_router()
+    prompt = (
+        f"Generate {payload.count} detailed image prompts for: {payload.concept}\n"
+        f"Style: {payload.style}, Aspect ratio: {payload.aspectRatio}\n\n"
+        "For each image provide a JSON object with:\n"
+        "- title: short descriptive title\n"
+        "- prompt: 150-200 word Stable Diffusion / Midjourney prompt (lighting, camera, style tokens)\n"
+        "- negative_prompt: what to exclude\n"
+        "- model_suggestion: e.g. 'SDXL + Cinematic LoRA', 'Midjourney v6', 'DALL-E 3'\n"
+        "- color_palette: 3-5 hex codes\n\n"
+        "Respond ONLY with a valid JSON array."
+    )
+    result = router.lumi_chat(prompt, domain="creative")
+    return {
+        "concept": payload.concept,
+        "style": payload.style,
+        "aspectRatio": payload.aspectRatio,
+        "count": payload.count,
+        "output": result.content if result.ok else f"LUMI unavailable: {result.error}",
+        "model": result.model,
+        "ok": result.ok,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Static file serving — serve the built React UI at /
+# Must be registered AFTER all API routes so /api/* is not intercepted.
+# ---------------------------------------------------------------------------
+
+_RENDERER_DIR = Path(__file__).parent.parent / "dist" / "renderer"
+if _RENDERER_DIR.is_dir():
+    from fastapi.staticfiles import StaticFiles  # noqa: PLC0415
+    app.mount("/", StaticFiles(directory=str(_RENDERER_DIR), html=True), name="ui")

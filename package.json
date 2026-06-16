@@ -1,7 +1,7 @@
 {
   "name": "trezzworld-production-studio",
   "version": "0.1.0-alpha",
-  "description": "TrezzWorld Production Studio – offline-first creative suite",
+  "description": "TrezzWorld Production Studio \u2013 offline-first creative suite",
   "private": true,
   "main": "dist/electron/main.js",
   "scripts": {
@@ -12,7 +12,9 @@
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.node.json",
     "dist": "npm run build && electron-builder",
-    "backend:dev": "uvicorn backend.main:app --reload --port 8000"
+    "backend:dev": "uvicorn backend.main:app --reload --port 8000",
+    "dev:web": "vite",
+    "build:web": "vite build"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -26,8 +28,7 @@
     "electron": "^31.0.0",
     "electron-builder": "^24.13.3",
     "typescript": "^5.4.5",
-    "vite": "^5.3.1",
+    "vite": "^6.3.5",
     "wait-on": "^7.2.0"
   }
 }
-

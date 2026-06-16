@@ -28,7 +28,7 @@ interface VideoStoryboardScene { id: string; title: string; duration_seconds: nu
 interface VideoStoryboard { title?: string; logline?: string; style?: string; total_duration_seconds?: number; color_palette?: string[]; audio?: Record<string, unknown>; scenes?: VideoStoryboardScene[]; }
 interface VideoJob { jobId: string; concept: string; durationSeconds: number; style: string; resolution: string; fps: number; status: string; progress: number; message: string; storyboard: VideoStoryboard; outputPath: string | null; downloadReady: boolean; error: string | null; createdAt: number; }
 
-type Tab = 'studio' | 'chat' | 'video' | 'models';
+type Tab = 'studio' | 'chat' | 'video' | 'music' | 'image' | 'code' | 'models';
 
 const API = 'http://localhost:8000';
 
@@ -95,6 +95,206 @@ function ProgressBar({ pct, status }: { pct: number; status: string }) {
   return (
     <div style={progress(pct)}>
       <div style={{ height: '100%', width: `${pct}%`, background: col, borderRadius: '999px', transition: 'width 0.5s ease' }} />
+
+      {/* ── MUSIC GENERATOR TAB ───────────────────────────────────────── */}
+      {tab === 'music' && (
+        <div style={pageWrap}>
+          <section style={heroCard}>
+            <h1 style={{ margin: '0 0 6px', fontSize: '22px' }}>🎵 Music Generator</h1>
+            <p style={{ margin: 0, opacity: 0.8, fontSize: '14px' }}>LUMI composes detailed production briefs — arrangement, instruments, structure, mixing targets. Export to your DAW (Ableton, FL Studio, Logic).</p>
+          </section>
+
+          <section style={card}>
+            <h2 style={h2style}>New Music Project</h2>
+            <form onSubmit={generateMusic} style={{ display: 'grid', gap: '16px' }}>
+              <div>
+                <label style={label}>Concept / Brief</label>
+                <textarea value={musicConcept} onChange={e => setMusicConcept(e.target.value)} rows={3} style={textarea} placeholder="e.g. Epic orchestral theme for TrezzWorld Adventures game trailer — builds from quiet strings to full brass, heroic, adventurous, ends with logo sting." />
+              </div>
+              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                <div>
+                  <label style={label}>Genre</label>
+                  <select value={musicGenre} onChange={e => setMusicGenre(e.target.value)} style={select}>
+                    <option value="cinematic">Cinematic / Orchestral</option>
+                    <option value="hip-hop">Hip-Hop / Trap</option>
+                    <option value="electronic">Electronic / EDM</option>
+                    <option value="lo-fi">Lo-Fi / Chill</option>
+                    <option value="rock">Rock / Metal</option>
+                    <option value="jazz">Jazz / Soul</option>
+                    <option value="pop">Pop</option>
+                    <option value="ambient">Ambient / Atmospheric</option>
+                    <option value="game ost">Game OST</option>
+                    <option value="r&b">R&B</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={label}>Mood</label>
+                  <select value={musicMood} onChange={e => setMusicMood(e.target.value)} style={select}>
+                    <option value="epic">Epic</option>
+                    <option value="emotional">Emotional</option>
+                    <option value="energetic">Energetic</option>
+                    <option value="dark">Dark / Tense</option>
+                    <option value="uplifting">Uplifting</option>
+                    <option value="melancholic">Melancholic</option>
+                    <option value="mysterious">Mysterious</option>
+                    <option value="chill">Chill / Relaxed</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={label}>BPM</label>
+                  <input type="number" min={60} max={200} value={musicBpm} onChange={e => setMusicBpm(Number(e.target.value))} style={{ ...input, width: '80px' }} />
+                </div>
+                <div style={{ flex: 1, minWidth: '200px' }}>
+                  <label style={label}>Duration: {musicDuration}s {musicDuration >= 60 ? `(${(musicDuration/60).toFixed(1)} min)` : ''}</label>
+                  <input type="range" min={15} max={600} step={15} value={musicDuration} onChange={e => setMusicDuration(Number(e.target.value))} style={{ width: '100%', accentColor: '#38bdf8' }} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', opacity: 0.5 }}><span>15s</span><span>5 min</span><span>10 min</span></div>
+                </div>
+              </div>
+              <button type="submit" disabled={generatingMusic || !musicConcept.trim()} style={{ ...btn('primary', generatingMusic || !musicConcept.trim()), padding: '12px 28px', fontSize: '15px' }}>
+                {generatingMusic ? '🎵 Composing…' : '🎵 Compose with LUMI'}
+              </button>
+            </form>
+          </section>
+
+          {musicResult && (
+            <section style={card}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <h2 style={{ ...h2style, margin: 0 }}>🎼 Composition Brief</h2>
+                <button onClick={() => { const el = document.createElement('a'); el.href = URL.createObjectURL(new Blob([musicResult], {type:'text/plain'})); el.download = 'music-brief.txt'; el.click(); }} style={{ ...btn('secondary'), fontSize: '12px', padding: '6px 12px' }}>⬇ Download</button>
+              </div>
+              <pre style={{ whiteSpace: 'pre-wrap', fontFamily: '"Inter", system-ui, sans-serif', fontSize: '13px', lineHeight: 1.7, margin: 0, opacity: 0.9 }}>{musicResult}</pre>
+            </section>
+          )}
+        </div>
+      )}
+
+      {/* ── IMAGE GENERATOR TAB ───────────────────────────────────────── */}
+      {tab === 'image' && (
+        <div style={pageWrap}>
+          <section style={heroCard}>
+            <h1 style={{ margin: '0 0 6px', fontSize: '22px' }}>🖼 Image Generator</h1>
+            <p style={{ margin: 0, opacity: 0.8, fontSize: '14px' }}>LUMI engineers detailed prompts for Stable Diffusion, Midjourney, DALL-E, or Firefly. Unlimited images. Copy prompts directly into any AI image tool.</p>
+          </section>
+
+          <section style={card}>
+            <h2 style={h2style}>New Image Set</h2>
+            <form onSubmit={generateImage} style={{ display: 'grid', gap: '16px' }}>
+              <div>
+                <label style={label}>Concept</label>
+                <textarea value={imageConcept} onChange={e => setImageConcept(e.target.value)} rows={3} style={textarea} placeholder="e.g. TrezzWorld Adventures game poster — epic fantasy landscape with characters, castle in background, golden hour lighting, dramatic sky" />
+              </div>
+              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                <div>
+                  <label style={label}>Style</label>
+                  <select value={imageStyle} onChange={e => setImageStyle(e.target.value)} style={select}>
+                    <option value="photorealistic">Photorealistic</option>
+                    <option value="cinematic">Cinematic Film Still</option>
+                    <option value="digital art">Digital Art / Concept Art</option>
+                    <option value="anime">Anime / Manga</option>
+                    <option value="3d render">3D Render / CGI</option>
+                    <option value="oil painting">Oil Painting / Classical</option>
+                    <option value="watercolor">Watercolor / Illustration</option>
+                    <option value="comic book">Comic Book / Graphic Novel</option>
+                    <option value="pixel art">Pixel Art / Retro</option>
+                    <option value="minimalist">Minimalist / Flat Design</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={label}>Aspect Ratio</label>
+                  <select value={imageAspect} onChange={e => setImageAspect(e.target.value)} style={select}>
+                    <option value="16:9">16:9 — Landscape / YouTube</option>
+                    <option value="1:1">1:1 — Square / Instagram</option>
+                    <option value="9:16">9:16 — Vertical / Reels</option>
+                    <option value="4:3">4:3 — Standard</option>
+                    <option value="3:2">3:2 — Photography</option>
+                    <option value="2:1">2:1 — Widescreen</option>
+                    <option value="21:9">21:9 — Ultrawide</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={label}>Images</label>
+                  <select value={imageCount} onChange={e => setImageCount(Number(e.target.value))} style={select}>
+                    <option value={1}>1 variation</option>
+                    <option value={2}>2 variations</option>
+                    <option value={4}>4 variations</option>
+                    <option value={6}>6 variations</option>
+                    <option value={8}>8 variations</option>
+                  </select>
+                </div>
+              </div>
+              <button type="submit" disabled={generatingImage || !imageConcept.trim()} style={{ ...btn('primary', generatingImage || !imageConcept.trim()), padding: '12px 28px', fontSize: '15px' }}>
+                {generatingImage ? '🖼 Engineering prompts…' : '🖼 Generate Image Prompts'}
+              </button>
+            </form>
+          </section>
+
+          {imageResult && (
+            <section style={card}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                <h2 style={{ ...h2style, margin: 0 }}>🎨 Image Prompts</h2>
+                <button onClick={() => { const el = document.createElement('a'); el.href = URL.createObjectURL(new Blob([imageResult], {type:'text/plain'})); el.download = 'image-prompts.txt'; el.click(); }} style={{ ...btn('secondary'), fontSize: '12px', padding: '6px 12px' }}>⬇ Download</button>
+              </div>
+              <pre style={{ whiteSpace: 'pre-wrap', fontFamily: '"Inter", system-ui, sans-serif', fontSize: '13px', lineHeight: 1.7, margin: 0, opacity: 0.9, maxHeight: '600px', overflowY: 'auto' }}>{imageResult}</pre>
+              <p style={{ ...hint, marginTop: '12px' }}>Copy each prompt into Stable Diffusion, Midjourney, DALL-E 3, Adobe Firefly, or any AI image tool.</p>
+            </section>
+          )}
+        </div>
+      )}
+
+      {/* ── CODE / DOCS TAB ────────────────────────────────────────────── */}
+      {tab === 'code' && (
+        <div style={pageWrap}>
+          <section style={heroCard}>
+            <h1 style={{ margin: '0 0 6px', fontSize: '22px' }}>💻 Code & Docs Workspace</h1>
+            <p style={{ margin: 0, opacity: 0.8, fontSize: '14px' }}>LUMI generates production-ready code, documentation, APIs, games, scripts, and builds. All languages. No placeholders.</p>
+          </section>
+
+          <section style={card}>
+            <h2 style={h2style}>Code Generator</h2>
+            <form onSubmit={generateCode} style={{ display: 'grid', gap: '16px' }}>
+              <div>
+                <label style={label}>What to build</label>
+                <textarea value={codePrompt} onChange={e => setCodePrompt(e.target.value)} rows={4} style={textarea} placeholder="e.g. A React component for a video upload panel with drag-and-drop, progress bar, file validation (mp4/mov only, 500MB max), and a cancel button. Use TypeScript and Tailwind CSS." />
+              </div>
+              <div>
+                <label style={label}>Language / Framework</label>
+                <select value={codeLanguage} onChange={e => setCodeLanguage(e.target.value)} style={select}>
+                  <option value="typescript">TypeScript / React</option>
+                  <option value="python">Python</option>
+                  <option value="javascript">JavaScript / Node.js</option>
+                  <option value="lua">Lua (Roblox)</option>
+                  <option value="csharp">C# (Unity)</option>
+                  <option value="gdscript">GDScript (Godot)</option>
+                  <option value="html/css">HTML / CSS</option>
+                  <option value="sql">SQL</option>
+                  <option value="bash">Bash / PowerShell</option>
+                  <option value="rust">Rust</option>
+                  <option value="go">Go</option>
+                  <option value="swift">Swift / SwiftUI</option>
+                  <option value="kotlin">Kotlin (Android)</option>
+                  <option value="markdown">Markdown Documentation</option>
+                </select>
+              </div>
+              <button type="submit" disabled={generatingCode || !codePrompt.trim()} style={{ ...btn('primary', generatingCode || !codePrompt.trim()), padding: '12px 28px', fontSize: '15px' }}>
+                {generatingCode ? '💻 Generating…' : '💻 Generate Code'}
+              </button>
+            </form>
+          </section>
+
+          {codeResult && (
+            <section style={card}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <h2 style={{ ...h2style, margin: 0 }}>📄 Output</h2>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button onClick={() => navigator.clipboard.writeText(codeResult)} style={{ ...btn('secondary'), fontSize: '12px', padding: '6px 12px' }}>📋 Copy</button>
+                  <button onClick={() => { const el = document.createElement('a'); const ext = codeLanguage === 'python' ? 'py' : codeLanguage === 'lua' ? 'lua' : codeLanguage === 'html/css' ? 'html' : 'ts'; el.href = URL.createObjectURL(new Blob([codeResult], {type:'text/plain'})); el.download = `lumi-output.${ext}`; el.click(); }} style={{ ...btn('secondary'), fontSize: '12px', padding: '6px 12px' }}>⬇ Download</button>
+                </div>
+              </div>
+              <pre style={{ whiteSpace: 'pre-wrap', fontFamily: '"Fira Code", "Cascadia Code", monospace', fontSize: '13px', lineHeight: 1.6, margin: 0, background: '#06101e', padding: '16px', borderRadius: '10px', overflowX: 'auto', maxHeight: '640px', overflowY: 'auto' }}>{codeResult}</pre>
+            </section>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -142,6 +342,29 @@ export default function App() {
   const [videoJobs, setVideoJobs] = useState<VideoJob[]>([]);
   const [creatingVideo, setCreatingVideo] = useState(false);
   const videoPolls = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+
+  // Music
+  const [musicConcept, setMusicConcept] = useState('');
+  const [musicGenre, setMusicGenre] = useState('cinematic');
+  const [musicBpm, setMusicBpm] = useState(120);
+  const [musicMood, setMusicMood] = useState('epic');
+  const [musicDuration, setMusicDuration] = useState(60);
+  const [musicResult, setMusicResult] = useState('');
+  const [generatingMusic, setGeneratingMusic] = useState(false);
+
+  // Image
+  const [imageConcept, setImageConcept] = useState('');
+  const [imageStyle, setImageStyle] = useState('photorealistic');
+  const [imageAspect, setImageAspect] = useState('16:9');
+  const [imageCount, setImageCount] = useState(4);
+  const [imageResult, setImageResult] = useState('');
+  const [generatingImage, setGeneratingImage] = useState(false);
+
+  // Code
+  const [codePrompt, setCodePrompt] = useState('');
+  const [codeLanguage, setCodeLanguage] = useState('typescript');
+  const [codeResult, setCodeResult] = useState('');
+  const [generatingCode, setGeneratingCode] = useState(false);
 
   // ── Initial data load ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -253,6 +476,49 @@ export default function App() {
     a.click();
   };
 
+  const generateMusic = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!musicConcept.trim()) return;
+    setGeneratingMusic(true);
+    setMusicResult('');
+    try {
+      const data = await postJson<{ composition: string; model: string; ok: boolean }>(`${API}/api/music/generate`, {
+        concept: musicConcept, genre: musicGenre, bpm: musicBpm, mood: musicMood, durationSeconds: musicDuration,
+      });
+      setMusicResult(data.composition);
+    } catch { setMusicResult('⚠️ Music generation failed. Is the backend running with OPENROUTER_API_KEY set?'); }
+    finally { setGeneratingMusic(false); }
+  };
+
+  const generateImage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!imageConcept.trim()) return;
+    setGeneratingImage(true);
+    setImageResult('');
+    try {
+      const data = await postJson<{ output: string; model: string; ok: boolean }>(`${API}/api/image/generate`, {
+        concept: imageConcept, style: imageStyle, aspectRatio: imageAspect, count: imageCount,
+      });
+      setImageResult(data.output);
+    } catch { setImageResult('⚠️ Image prompt generation failed. Is the backend running?'); }
+    finally { setGeneratingImage(false); }
+  };
+
+  const generateCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!codePrompt.trim()) return;
+    setGeneratingCode(true);
+    setCodeResult('');
+    try {
+      const data = await postJson<{ content: string; model: string; ok: boolean }>(`${API}/api/lumi/chat`, {
+        message: `Generate complete, production-ready ${codeLanguage} code for:\n${codePrompt}\n\nProvide well-commented, clean, runnable code with no placeholders.`,
+        domain: 'code',
+      });
+      setCodeResult(data.content);
+    } catch { setCodeResult('⚠️ Code generation failed. Is the backend running with OPENROUTER_API_KEY set?'); }
+    finally { setGeneratingCode(false); }
+  };
+
   // ── Derived state ──────────────────────────────────────────────────────────
   const activeQueue = pipelineStatus?.jobs ?? missionBoot?.executionQueue ?? controlPlane?.executionQueue ?? [];
   const readiness = controlPlane?.productionReadiness.score ?? metaStatus?.productionReadiness.score ?? 0;
@@ -273,8 +539,11 @@ export default function App() {
         </div>
         <div style={tabBar}>
           <TabButton id="studio" label="🎬 Studio" active={tab==='studio'} onClick={() => setTab('studio')} />
-          <TabButton id="chat" label="💬 LUMI Chat" active={tab==='chat'} onClick={() => setTab('chat')} />
-          <TabButton id="video" label="🎥 Video Creator" active={tab==='video'} onClick={() => setTab('video')} />
+          <TabButton id="chat" label="💬 LUMI" active={tab==='chat'} onClick={() => setTab('chat')} />
+          <TabButton id="video" label="🎥 Video" active={tab==='video'} onClick={() => setTab('video')} />
+          <TabButton id="music" label="🎵 Music" active={tab==='music'} onClick={() => setTab('music')} />
+          <TabButton id="image" label="🖼 Image" active={tab==='image'} onClick={() => setTab('image')} />
+          <TabButton id="code" label="💻 Code" active={tab==='code'} onClick={() => setTab('code')} />
           <TabButton id="models" label="🤖 AI Models" active={tab==='models'} onClick={() => setTab('models')} />
         </div>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '13px' }}>
@@ -649,6 +918,206 @@ export default function App() {
               ))}
             </div>
           </section>
+        </div>
+      )}
+
+      {/* ── MUSIC GENERATOR TAB ───────────────────────────────────────── */}
+      {tab === 'music' && (
+        <div style={pageWrap}>
+          <section style={heroCard}>
+            <h1 style={{ margin: '0 0 6px', fontSize: '22px' }}>🎵 Music Generator</h1>
+            <p style={{ margin: 0, opacity: 0.8, fontSize: '14px' }}>LUMI composes detailed production briefs — arrangement, instruments, structure, mixing targets. Export to your DAW (Ableton, FL Studio, Logic).</p>
+          </section>
+
+          <section style={card}>
+            <h2 style={h2style}>New Music Project</h2>
+            <form onSubmit={generateMusic} style={{ display: 'grid', gap: '16px' }}>
+              <div>
+                <label style={label}>Concept / Brief</label>
+                <textarea value={musicConcept} onChange={e => setMusicConcept(e.target.value)} rows={3} style={textarea} placeholder="e.g. Epic orchestral theme for TrezzWorld Adventures game trailer — builds from quiet strings to full brass, heroic, adventurous, ends with logo sting." />
+              </div>
+              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                <div>
+                  <label style={label}>Genre</label>
+                  <select value={musicGenre} onChange={e => setMusicGenre(e.target.value)} style={select}>
+                    <option value="cinematic">Cinematic / Orchestral</option>
+                    <option value="hip-hop">Hip-Hop / Trap</option>
+                    <option value="electronic">Electronic / EDM</option>
+                    <option value="lo-fi">Lo-Fi / Chill</option>
+                    <option value="rock">Rock / Metal</option>
+                    <option value="jazz">Jazz / Soul</option>
+                    <option value="pop">Pop</option>
+                    <option value="ambient">Ambient / Atmospheric</option>
+                    <option value="game ost">Game OST</option>
+                    <option value="r&b">R&B</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={label}>Mood</label>
+                  <select value={musicMood} onChange={e => setMusicMood(e.target.value)} style={select}>
+                    <option value="epic">Epic</option>
+                    <option value="emotional">Emotional</option>
+                    <option value="energetic">Energetic</option>
+                    <option value="dark">Dark / Tense</option>
+                    <option value="uplifting">Uplifting</option>
+                    <option value="melancholic">Melancholic</option>
+                    <option value="mysterious">Mysterious</option>
+                    <option value="chill">Chill / Relaxed</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={label}>BPM</label>
+                  <input type="number" min={60} max={200} value={musicBpm} onChange={e => setMusicBpm(Number(e.target.value))} style={{ ...input, width: '80px' }} />
+                </div>
+                <div style={{ flex: 1, minWidth: '200px' }}>
+                  <label style={label}>Duration: {musicDuration}s {musicDuration >= 60 ? `(${(musicDuration/60).toFixed(1)} min)` : ''}</label>
+                  <input type="range" min={15} max={600} step={15} value={musicDuration} onChange={e => setMusicDuration(Number(e.target.value))} style={{ width: '100%', accentColor: '#38bdf8' }} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', opacity: 0.5 }}><span>15s</span><span>5 min</span><span>10 min</span></div>
+                </div>
+              </div>
+              <button type="submit" disabled={generatingMusic || !musicConcept.trim()} style={{ ...btn('primary', generatingMusic || !musicConcept.trim()), padding: '12px 28px', fontSize: '15px' }}>
+                {generatingMusic ? '🎵 Composing…' : '🎵 Compose with LUMI'}
+              </button>
+            </form>
+          </section>
+
+          {musicResult && (
+            <section style={card}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <h2 style={{ ...h2style, margin: 0 }}>🎼 Composition Brief</h2>
+                <button onClick={() => { const el = document.createElement('a'); el.href = URL.createObjectURL(new Blob([musicResult], {type:'text/plain'})); el.download = 'music-brief.txt'; el.click(); }} style={{ ...btn('secondary'), fontSize: '12px', padding: '6px 12px' }}>⬇ Download</button>
+              </div>
+              <pre style={{ whiteSpace: 'pre-wrap', fontFamily: '"Inter", system-ui, sans-serif', fontSize: '13px', lineHeight: 1.7, margin: 0, opacity: 0.9 }}>{musicResult}</pre>
+            </section>
+          )}
+        </div>
+      )}
+
+      {/* ── IMAGE GENERATOR TAB ───────────────────────────────────────── */}
+      {tab === 'image' && (
+        <div style={pageWrap}>
+          <section style={heroCard}>
+            <h1 style={{ margin: '0 0 6px', fontSize: '22px' }}>🖼 Image Generator</h1>
+            <p style={{ margin: 0, opacity: 0.8, fontSize: '14px' }}>LUMI engineers detailed prompts for Stable Diffusion, Midjourney, DALL-E, or Firefly. Unlimited images. Copy prompts directly into any AI image tool.</p>
+          </section>
+
+          <section style={card}>
+            <h2 style={h2style}>New Image Set</h2>
+            <form onSubmit={generateImage} style={{ display: 'grid', gap: '16px' }}>
+              <div>
+                <label style={label}>Concept</label>
+                <textarea value={imageConcept} onChange={e => setImageConcept(e.target.value)} rows={3} style={textarea} placeholder="e.g. TrezzWorld Adventures game poster — epic fantasy landscape with characters, castle in background, golden hour lighting, dramatic sky" />
+              </div>
+              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                <div>
+                  <label style={label}>Style</label>
+                  <select value={imageStyle} onChange={e => setImageStyle(e.target.value)} style={select}>
+                    <option value="photorealistic">Photorealistic</option>
+                    <option value="cinematic">Cinematic Film Still</option>
+                    <option value="digital art">Digital Art / Concept Art</option>
+                    <option value="anime">Anime / Manga</option>
+                    <option value="3d render">3D Render / CGI</option>
+                    <option value="oil painting">Oil Painting / Classical</option>
+                    <option value="watercolor">Watercolor / Illustration</option>
+                    <option value="comic book">Comic Book / Graphic Novel</option>
+                    <option value="pixel art">Pixel Art / Retro</option>
+                    <option value="minimalist">Minimalist / Flat Design</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={label}>Aspect Ratio</label>
+                  <select value={imageAspect} onChange={e => setImageAspect(e.target.value)} style={select}>
+                    <option value="16:9">16:9 — Landscape / YouTube</option>
+                    <option value="1:1">1:1 — Square / Instagram</option>
+                    <option value="9:16">9:16 — Vertical / Reels</option>
+                    <option value="4:3">4:3 — Standard</option>
+                    <option value="3:2">3:2 — Photography</option>
+                    <option value="2:1">2:1 — Widescreen</option>
+                    <option value="21:9">21:9 — Ultrawide</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={label}>Images</label>
+                  <select value={imageCount} onChange={e => setImageCount(Number(e.target.value))} style={select}>
+                    <option value={1}>1 variation</option>
+                    <option value={2}>2 variations</option>
+                    <option value={4}>4 variations</option>
+                    <option value={6}>6 variations</option>
+                    <option value={8}>8 variations</option>
+                  </select>
+                </div>
+              </div>
+              <button type="submit" disabled={generatingImage || !imageConcept.trim()} style={{ ...btn('primary', generatingImage || !imageConcept.trim()), padding: '12px 28px', fontSize: '15px' }}>
+                {generatingImage ? '🖼 Engineering prompts…' : '🖼 Generate Image Prompts'}
+              </button>
+            </form>
+          </section>
+
+          {imageResult && (
+            <section style={card}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                <h2 style={{ ...h2style, margin: 0 }}>🎨 Image Prompts</h2>
+                <button onClick={() => { const el = document.createElement('a'); el.href = URL.createObjectURL(new Blob([imageResult], {type:'text/plain'})); el.download = 'image-prompts.txt'; el.click(); }} style={{ ...btn('secondary'), fontSize: '12px', padding: '6px 12px' }}>⬇ Download</button>
+              </div>
+              <pre style={{ whiteSpace: 'pre-wrap', fontFamily: '"Inter", system-ui, sans-serif', fontSize: '13px', lineHeight: 1.7, margin: 0, opacity: 0.9, maxHeight: '600px', overflowY: 'auto' }}>{imageResult}</pre>
+              <p style={{ ...hint, marginTop: '12px' }}>Copy each prompt into Stable Diffusion, Midjourney, DALL-E 3, Adobe Firefly, or any AI image tool.</p>
+            </section>
+          )}
+        </div>
+      )}
+
+      {/* ── CODE / DOCS TAB ────────────────────────────────────────────── */}
+      {tab === 'code' && (
+        <div style={pageWrap}>
+          <section style={heroCard}>
+            <h1 style={{ margin: '0 0 6px', fontSize: '22px' }}>💻 Code & Docs Workspace</h1>
+            <p style={{ margin: 0, opacity: 0.8, fontSize: '14px' }}>LUMI generates production-ready code, documentation, APIs, games, scripts, and builds. All languages. No placeholders.</p>
+          </section>
+
+          <section style={card}>
+            <h2 style={h2style}>Code Generator</h2>
+            <form onSubmit={generateCode} style={{ display: 'grid', gap: '16px' }}>
+              <div>
+                <label style={label}>What to build</label>
+                <textarea value={codePrompt} onChange={e => setCodePrompt(e.target.value)} rows={4} style={textarea} placeholder="e.g. A React component for a video upload panel with drag-and-drop, progress bar, file validation (mp4/mov only, 500MB max), and a cancel button. Use TypeScript and Tailwind CSS." />
+              </div>
+              <div>
+                <label style={label}>Language / Framework</label>
+                <select value={codeLanguage} onChange={e => setCodeLanguage(e.target.value)} style={select}>
+                  <option value="typescript">TypeScript / React</option>
+                  <option value="python">Python</option>
+                  <option value="javascript">JavaScript / Node.js</option>
+                  <option value="lua">Lua (Roblox)</option>
+                  <option value="csharp">C# (Unity)</option>
+                  <option value="gdscript">GDScript (Godot)</option>
+                  <option value="html/css">HTML / CSS</option>
+                  <option value="sql">SQL</option>
+                  <option value="bash">Bash / PowerShell</option>
+                  <option value="rust">Rust</option>
+                  <option value="go">Go</option>
+                  <option value="swift">Swift / SwiftUI</option>
+                  <option value="kotlin">Kotlin (Android)</option>
+                  <option value="markdown">Markdown Documentation</option>
+                </select>
+              </div>
+              <button type="submit" disabled={generatingCode || !codePrompt.trim()} style={{ ...btn('primary', generatingCode || !codePrompt.trim()), padding: '12px 28px', fontSize: '15px' }}>
+                {generatingCode ? '💻 Generating…' : '💻 Generate Code'}
+              </button>
+            </form>
+          </section>
+
+          {codeResult && (
+            <section style={card}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <h2 style={{ ...h2style, margin: 0 }}>📄 Output</h2>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button onClick={() => navigator.clipboard.writeText(codeResult)} style={{ ...btn('secondary'), fontSize: '12px', padding: '6px 12px' }}>📋 Copy</button>
+                  <button onClick={() => { const el = document.createElement('a'); const ext = codeLanguage === 'python' ? 'py' : codeLanguage === 'lua' ? 'lua' : codeLanguage === 'html/css' ? 'html' : 'ts'; el.href = URL.createObjectURL(new Blob([codeResult], {type:'text/plain'})); el.download = `lumi-output.${ext}`; el.click(); }} style={{ ...btn('secondary'), fontSize: '12px', padding: '6px 12px' }}>⬇ Download</button>
+                </div>
+              </div>
+              <pre style={{ whiteSpace: 'pre-wrap', fontFamily: '"Fira Code", "Cascadia Code", monospace', fontSize: '13px', lineHeight: 1.6, margin: 0, background: '#06101e', padding: '16px', borderRadius: '10px', overflowX: 'auto', maxHeight: '640px', overflowY: 'auto' }}>{codeResult}</pre>
+            </section>
+          )}
         </div>
       )}
     </div>
