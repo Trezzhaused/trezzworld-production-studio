@@ -28,6 +28,7 @@ jobs:
           RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT: ${{ secrets.RAILWAY_ENVIRONMENT }}
         run: |
           if [ -z "$RAILWAY_TOKEN" ]; then
             echo "::error::RAILWAY_TOKEN secret is not configured."
@@ -53,7 +54,13 @@ jobs:
             echo "::error::Add it at: GitHub → Settings → Secrets and variables → Actions → New repository secret → Name: RAILWAY_PROJECT_ID"
             exit 1
           fi
+          TARGET_ENVIRONMENT="${RAILWAY_ENVIRONMENT:-production}"
+          if printf '%s' "$TARGET_ENVIRONMENT" | grep -q '[[:cntrl:]]'; then
+            echo "::error::RAILWAY environment value contains unsupported control characters."
+            exit 1
+          fi
           echo "TARGET_SERVICE=$TARGET_SERVICE" >> "$GITHUB_ENV"
+          echo "TARGET_ENVIRONMENT=$TARGET_ENVIRONMENT" >> "$GITHUB_ENV"
 
       # ── 4. Deploy to Railway (builds Dockerfile automatically) ────────────
       - name: Deploy via Railway
@@ -63,5 +70,6 @@ jobs:
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
         run: |
           DEPLOY_ARGS=(--service "$TARGET_SERVICE" --detach)
+          DEPLOY_ARGS=(--environment "$TARGET_ENVIRONMENT" "${DEPLOY_ARGS[@]}")
           DEPLOY_ARGS=(--project "$RAILWAY_PROJECT_ID" "${DEPLOY_ARGS[@]}")
           railway up "${DEPLOY_ARGS[@]}"
