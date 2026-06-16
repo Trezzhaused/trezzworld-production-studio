@@ -233,6 +233,20 @@ def _fallback_design_doc(job: RobloxJob) -> dict[str, Any]:
     }
 
 
+def _safe_datastore_name(title: str) -> str:
+    """Return a Roblox DataStore-safe name (alphanumeric + underscores only)."""
+    return re.sub(r"[^a-zA-Z0-9_]", "_", title)
+
+
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """Convert a CSS hex color string to an (R, G, B) tuple."""
+    h = hex_color.lstrip("#")
+    if len(h) == 3:
+        h = h[0] * 2 + h[1] * 2 + h[2] * 2
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return r, g, b
+
+
 def _fallback_scripts(job: RobloxJob, design: dict[str, Any]) -> list[dict[str, str]]:
     """Minimal script set when AI is unavailable."""
     title = design.get("title", job.concept)
@@ -288,7 +302,7 @@ end
 local Players = game:GetService("Players")
 local DataStoreService = game:GetService("DataStoreService")
 
-local playerDataStore = DataStoreService:GetDataStore("{title.replace(" ", "_")}_PlayerData_v1")
+local playerDataStore = DataStoreService:GetDataStore("{_safe_datastore_name(title)}_PlayerData_v1")
 
 local DEFAULT_DATA = {{
     level = 1,
@@ -363,11 +377,11 @@ GameConfig.XP_PER_LEVEL = 1000
 
 -- UI Colors
 GameConfig.COLORS = {{
-    Primary = Color3.fromHex("38bdf8"),
-    Secondary = Color3.fromHex("0a1628"),
-    Accent = Color3.fromHex("f59e0b"),
-    Success = Color3.fromHex("22c55e"),
-    Danger = Color3.fromHex("ef4444"),
+    Primary = Color3.fromRGB{_hex_to_rgb("38bdf8")},
+    Secondary = Color3.fromRGB{_hex_to_rgb("0a1628")},
+    Accent = Color3.fromRGB{_hex_to_rgb("f59e0b")},
+    Success = Color3.fromRGB{_hex_to_rgb("22c55e")},
+    Danger = Color3.fromRGB{_hex_to_rgb("ef4444")},
 }}
 
 return GameConfig
@@ -399,8 +413,8 @@ levelLabel.Name = "LevelLabel"
 levelLabel.Size = UDim2.new(0, 200, 0, 40)
 levelLabel.Position = UDim2.new(0, 20, 0, 20)
 levelLabel.BackgroundTransparency = 0.5
-levelLabel.BackgroundColor3 = Color3.fromHex("0a1628")
-levelLabel.TextColor3 = Color3.fromHex("38bdf8")
+levelLabel.BackgroundColor3 = Color3.fromRGB{_hex_to_rgb("0a1628")}
+levelLabel.TextColor3 = Color3.fromRGB{_hex_to_rgb("38bdf8")}
 levelLabel.Text = "Level 1"
 levelLabel.TextScaled = true
 levelLabel.Font = Enum.Font.GothamBold
