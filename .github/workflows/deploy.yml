@@ -1,0 +1,28 @@
+name: Deploy to app.trezzhaus.com
+
+# Triggers: push to main branch
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:   # lets you trigger manually from GitHub Actions tab
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Check out the latest code ───────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Install Railway CLI ─────────────────────────────────────────────
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      # ── 3. Deploy to Railway (builds Dockerfile automatically) ────────────
+      - name: Deploy via Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service trezzworld-studio --detach

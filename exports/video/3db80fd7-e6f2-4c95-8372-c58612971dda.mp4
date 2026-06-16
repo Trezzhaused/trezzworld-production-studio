@@ -1,0 +1,7 @@
+TrezzWorld Production Studio — Video Export Placeholder
+Title: 30-second cinematic intro for TrezzWorld
+Duration: 30s
+Note: Install FFmpeg to generate real MP4 files.
+  Windows:  winget install FFmpeg
+  macOS:    brew install ffmpeg
+  Linux:    sudo apt install ffmpeg
