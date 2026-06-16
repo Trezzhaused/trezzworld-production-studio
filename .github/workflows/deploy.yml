@@ -27,6 +27,7 @@ jobs:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
         run: |
           if [ -z "$RAILWAY_TOKEN" ]; then
             echo "::error::RAILWAY_TOKEN secret is not configured."
@@ -45,6 +46,13 @@ jobs:
             echo "::error::RAILWAY service value contains unsupported control characters."
             exit 1
           fi
+          if [ -z "$RAILWAY_PROJECT_ID" ]; then
+            echo "::error::RAILWAY_PROJECT_ID secret is not configured."
+            echo "::error::Without a project ID, the Railway CLI cannot locate your service and will fail with 'Service not found'."
+            echo "::error::Find the value at: railway.com → Your Project → Settings → General → Project ID"
+            echo "::error::Add it at: GitHub → Settings → Secrets and variables → Actions → New repository secret → Name: RAILWAY_PROJECT_ID"
+            exit 1
+          fi
           echo "TARGET_SERVICE=$TARGET_SERVICE" >> "$GITHUB_ENV"
 
       # ── 4. Deploy to Railway (builds Dockerfile automatically) ────────────
@@ -52,9 +60,8 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
         run: |
           DEPLOY_ARGS=(--service "$TARGET_SERVICE" --detach)
-          if [ -n "$RAILWAY_PROJECT_ID" ]; then
-            DEPLOY_ARGS=(--project "$RAILWAY_PROJECT_ID" "${DEPLOY_ARGS[@]}")
-          fi
+          DEPLOY_ARGS=(--project "$RAILWAY_PROJECT_ID" "${DEPLOY_ARGS[@]}")
           railway up "${DEPLOY_ARGS[@]}"
