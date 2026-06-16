@@ -44,15 +44,48 @@ interface MetaDevelopmentStatus {
   productionReadiness: ProductionReadiness;
 }
 
+interface MetaBuilderAction {
+  id: string;
+  title: string;
+  objective: string;
+  targetFiles: string[];
+}
+
+interface MetaBuilderGap {
+  phaseId: string;
+  phaseName: string;
+  priority: number;
+  missingFiles: string[];
+}
+
+interface TodoHotspot {
+  path: string;
+  markers: number;
+}
+
+interface MetaBuilderStatus {
+  mode: string;
+  summary: string;
+  readinessEstimate: number;
+  phaseGaps: MetaBuilderGap[];
+  nextActions: MetaBuilderAction[];
+  todoHotspots: TodoHotspot[];
+  capabilityRequests: string[];
+  executionLoop: string[];
+}
+
 export default function App() {
   const [backendStatus, setBackendStatus] = useState<BackendStatus | null>(null);
   const [metaStatus, setMetaStatus] = useState<MetaDevelopmentStatus | null>(null);
+  const [metaBuilderStatus, setMetaBuilderStatus] = useState<MetaBuilderStatus | null>(null);
   const [loadingBackend, setLoadingBackend] = useState(true);
   const [loadingMeta, setLoadingMeta] = useState(true);
+  const [loadingMetaBuilder, setLoadingMetaBuilder] = useState(true);
 
   useEffect(() => {
     const backendController = new AbortController();
     const metaController = new AbortController();
+    const metaBuilderController = new AbortController();
 
     fetch('http://localhost:8000/api/status', { signal: backendController.signal })
       .then((res) => res.json())
@@ -82,9 +115,24 @@ export default function App() {
         setLoadingMeta(false);
       });
 
+    fetch('http://localhost:8000/api/meta-builder/status', { signal: metaBuilderController.signal })
+      .then((res) => res.json())
+      .then((data: MetaBuilderStatus) => {
+        setMetaBuilderStatus(data);
+        setLoadingMetaBuilder(false);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          return;
+        }
+        setMetaBuilderStatus(null);
+        setLoadingMetaBuilder(false);
+      });
+
     return () => {
       backendController.abort();
       metaController.abort();
+      metaBuilderController.abort();
     };
   }, []);
 
@@ -149,6 +197,46 @@ export default function App() {
         </>
       ) : (
         <p>⚠️ Meta development status unavailable.</p>
+      )}
+      <hr />
+      <h2>MetaBuilder</h2>
+      {loadingMetaBuilder ? (
+        <p>Analyzing repository gaps…</p>
+      ) : metaBuilderStatus ? (
+        <>
+          <p><strong>Mode:</strong> {metaBuilderStatus.mode}</p>
+          <p><strong>Summary:</strong> {metaBuilderStatus.summary}</p>
+          <p><strong>Autonomy readiness estimate:</strong> {metaBuilderStatus.readinessEstimate}%</p>
+
+          <h3>Top next actions</h3>
+          <ul>
+            {metaBuilderStatus.nextActions.map((action) => (
+              <li key={action.id}>
+                <strong>{action.title}</strong> — {action.objective}
+              </li>
+            ))}
+          </ul>
+
+          <h3>Missing phase files</h3>
+          <ul>
+            {metaBuilderStatus.phaseGaps.map((gap) => (
+              <li key={gap.phaseId}>
+                P{gap.priority} {gap.phaseName} — {gap.missingFiles.length} file(s) missing
+              </li>
+            ))}
+          </ul>
+
+          <h3>TODO hotspots</h3>
+          <ul>
+            {metaBuilderStatus.todoHotspots.map((hotspot) => (
+              <li key={hotspot.path}>
+                {hotspot.path} — {hotspot.markers}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <p>⚠️ MetaBuilder status unavailable.</p>
       )}
     </div>
   );

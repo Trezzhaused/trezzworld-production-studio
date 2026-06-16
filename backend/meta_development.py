@@ -9,6 +9,56 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_JSON = REPO_ROOT / "package.json"
 
 
+def get_phase_definitions() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": "phase-1",
+            "name": "Orchestration Runtime",
+            "requiredFiles": ["kernel/Kernel.ts", "lumi/AgentRuntime.ts", "orchestration/LUMIDirector.ts"],
+        },
+        {
+            "id": "phase-2",
+            "name": "Repository Intelligence",
+            "requiredFiles": ["lumi/RepositoryIntelligence.ts"],
+        },
+        {
+            "id": "phase-3",
+            "name": "Mission + Production Graph",
+            "requiredFiles": ["orchestration/MissionPlanner.ts", "lumi/TaskGraph.ts"],
+        },
+        {
+            "id": "phase-4",
+            "name": "Self-Building Loop",
+            "requiredFiles": ["lumi/MetaDevelopmentEngine.ts"],
+        },
+        {
+            "id": "phase-5",
+            "name": "Digital Twin + Architecture Validation",
+            "requiredFiles": ["digitalTwin/DependencyGraph.ts", "lumi/ArchitectureValidator.ts"],
+        },
+        {
+            "id": "phase-6",
+            "name": "Universal Capability Routing",
+            "requiredFiles": ["capability/ToolRouter.ts", "capability/ProviderRegistry.ts"],
+        },
+        {
+            "id": "phase-7",
+            "name": "Autonomous QA + Self-Healing",
+            "requiredFiles": ["testing/TestRunner.ts", "testing/AutoFixEngine.ts"],
+        },
+        {
+            "id": "phase-8",
+            "name": "Level 10 Production Integration",
+            "requiredFiles": ["orchestration/LumiOrchestrator.ts"],
+        },
+        {
+            "id": "phase-9",
+            "name": "Level 11 Autonomous Ecosystem",
+            "requiredFiles": ["autonomous/ContinuousImprovement.ts"],
+        },
+    ]
+
+
 def _count_files(path: Path, suffixes: tuple[str, ...]) -> int:
     if not path.exists():
         return 0
@@ -105,53 +155,7 @@ def _build_readiness() -> dict[str, Any]:
 
 
 def build_meta_development_status() -> dict[str, Any]:
-    phase_definitions = [
-        {
-            "id": "phase-1",
-            "name": "Orchestration Runtime",
-            "requiredFiles": ["kernel/Kernel.ts", "lumi/AgentRuntime.ts", "orchestration/LUMIDirector.ts"],
-        },
-        {
-            "id": "phase-2",
-            "name": "Repository Intelligence",
-            "requiredFiles": ["lumi/RepositoryIntelligence.ts"],
-        },
-        {
-            "id": "phase-3",
-            "name": "Mission + Production Graph",
-            "requiredFiles": ["orchestration/MissionPlanner.ts", "lumi/TaskGraph.ts"],
-        },
-        {
-            "id": "phase-4",
-            "name": "Self-Building Loop",
-            "requiredFiles": ["lumi/MetaDevelopmentEngine.ts"],
-        },
-        {
-            "id": "phase-5",
-            "name": "Digital Twin + Architecture Validation",
-            "requiredFiles": ["digitalTwin/DependencyGraph.ts", "lumi/ArchitectureValidator.ts"],
-        },
-        {
-            "id": "phase-6",
-            "name": "Universal Capability Routing",
-            "requiredFiles": ["capability/ToolRouter.ts", "capability/ProviderRegistry.ts"],
-        },
-        {
-            "id": "phase-7",
-            "name": "Autonomous QA + Self-Healing",
-            "requiredFiles": ["testing/TestRunner.ts", "testing/AutoFixEngine.ts"],
-        },
-        {
-            "id": "phase-8",
-            "name": "Level 10 Production Integration",
-            "requiredFiles": ["orchestration/LumiOrchestrator.ts"],
-        },
-        {
-            "id": "phase-9",
-            "name": "Level 11 Autonomous Ecosystem",
-            "requiredFiles": ["autonomous/ContinuousImprovement.ts"],
-        },
-    ]
+    phase_definitions = get_phase_definitions()
 
     phases = [
         {

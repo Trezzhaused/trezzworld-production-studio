@@ -107,6 +107,9 @@ Distributables are written to the `release/` folder.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/status` | Returns `{ status, version }` |
+| GET | `/api/meta-development/status` | Returns roadmap phases, repository intelligence, and readiness checks |
+| GET | `/api/meta-builder/status` | Returns MetaBuilder gap analysis, next actions, and autonomy readiness estimate |
+| POST | `/api/meta-builder/continue` | Generates the next autonomous action batch from a high-level objective |
 | GET | `/docs` | FastAPI interactive docs (Swagger UI) |
 
 ---
@@ -127,4 +130,3 @@ Distributables are written to the `release/` folder.
 ## Changelog
 
 See [CHANGELOG.md](./CHANGELOG.md).
-
