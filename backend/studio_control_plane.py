@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+import uuid
 from typing import Any
 
 from .meta_builder import build_meta_builder_status, continue_meta_builder
@@ -145,6 +147,13 @@ def build_studio_control_plane() -> dict[str, Any]:
 
 
 def boot_studio_mission(prompt: str) -> dict[str, Any]:
+    # Import here to avoid circular imports at module load time
+    from .pipeline_executor import get_executor  # noqa: PLC0415
+
+    mission_id = f"mission-{int(time.time())}-{uuid.uuid4().hex[:6]}"
+    executor = get_executor()
+    manifest = executor.boot_and_execute(mission_id, prompt, run_async=True)
+
     mission = continue_meta_builder(prompt, max_actions=5)
     provider_map = {entry["capability"]: entry for entry in CAPABILITY_PROVIDERS}
     requested_capabilities = [
@@ -158,15 +167,20 @@ def boot_studio_mission(prompt: str) -> dict[str, Any]:
         "BuildCheckout",
     ]
     routed = [provider_map[capability] for capability in requested_capabilities]
-    queue = _worker_batch(mission["selectedActions"])
 
     return {
         "objective": prompt,
-        "status": "ready-to-start",
-        "approvalRequired": True,
-        "summary": "Mission bootstrapped. LUMI can begin UI, asset, media, and commerce preparation from this control plane.",
+        "missionId": mission_id,
+        "status": "executing",
+        "approvalRequired": False,
+        "summary": (
+            f"Mission {mission_id} is executing. "
+            f"LUMI is building across {manifest['taskCount']} pipeline stages via "
+            f"{manifest.get('plannerModel', 'cascade')} (free-first AI cascade)."
+        ),
+        "plannerModel": manifest.get("plannerModel", "cascade"),
         "requestedCapabilities": routed,
-        "executionQueue": queue,
+        "executionQueue": manifest["jobs"],
         "executionPlan": mission["executionPlan"],
         "selectedActions": mission["selectedActions"],
     }

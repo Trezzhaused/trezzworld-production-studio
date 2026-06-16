@@ -1,0 +1,3 @@
+[submodule "model/jailbreak-autoresearch"]
+	path = model/jailbreak-autoresearch
+	url = https://github.com/Trezzhaused/jailbreak-autoresearch.git
