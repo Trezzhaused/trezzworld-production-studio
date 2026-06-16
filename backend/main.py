@@ -133,7 +133,7 @@ def lumi_chat(payload: LumiChatRequest):
         domain=payload.domain,
     )
 
-    content = result.content if result.ok else f"LUMI is unavailable: {result.error}"
+    content = result.content if result.ok else result.content or f"LUMI is unavailable: {result.error}"
     model_used = result.model if result.ok else "none"
 
     # Persist LUMI response
@@ -159,6 +159,82 @@ def lumi_chat_history(mission_id: str | None = None, limit: int = 40):
     from .mission_store import MissionStore  # noqa: PLC0415
     store = MissionStore()
     return {"history": store.get_chat_history(mission_id, limit=limit)}
+
+
+# ---------------------------------------------------------------------------
+# User-provided AI provider key management
+# Users can connect their own OpenRouter/OpenAI/Anthropic/Google accounts
+# so LUMI never goes fully offline when free-tier limits are hit.
+# ---------------------------------------------------------------------------
+
+class UserKeyRequest(BaseModel):
+    provider: str
+    api_key: str
+    label: str = ""
+
+
+@app.post("/api/lumi/user-key")
+def lumi_add_user_key(payload: UserKeyRequest):
+    """
+    Register a user-provided AI provider API key.
+    Supported providers: openrouter, openai, anthropic, google.
+    The key is stored locally in the missions SQLite database.
+    """
+    from .user_key_store import get_user_key_store, PROVIDER_CATALOGUE  # noqa: PLC0415
+    if payload.provider not in PROVIDER_CATALOGUE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported provider '{payload.provider}'. Supported: {list(PROVIDER_CATALOGUE)}",
+        )
+    if not payload.api_key.strip():
+        raise HTTPException(status_code=400, detail="api_key must not be empty.")
+    store = get_user_key_store()
+    store.save_key(payload.provider, payload.api_key, label=payload.label)
+    info = PROVIDER_CATALOGUE[payload.provider]
+    return {
+        "ok": True,
+        "provider": payload.provider,
+        "name": info["name"],
+        "message": f"{info['name']} key saved. LUMI will use it when the main cascade is exhausted.",
+    }
+
+
+@app.get("/api/lumi/user-keys")
+def lumi_list_user_keys():
+    """
+    List configured user-provided provider keys (keys are masked for security).
+    Also returns the full provider catalogue with instructions for unconfigured providers.
+    """
+    from .user_key_store import get_user_key_store, PROVIDER_CATALOGUE  # noqa: PLC0415
+    store = get_user_key_store()
+    configured = {p["provider"]: p for p in store.list_providers()}
+    providers = []
+    for pid, info in sorted(PROVIDER_CATALOGUE.items(), key=lambda x: x[1]["priority"]):
+        entry = {
+            "provider": pid,
+            "name": info["name"],
+            "description": info["description"],
+            "cost": info["cost"],
+            "get_key_url": info["get_key_url"],
+            "recommended": info.get("recommended", False),
+            "configured": pid in configured,
+        }
+        if pid in configured:
+            entry["key_preview"] = configured[pid]["key_preview"]
+            entry["added_at"] = configured[pid]["added_at"]
+        providers.append(entry)
+    return {"providers": providers, "configured_count": len(configured)}
+
+
+@app.delete("/api/lumi/user-key/{provider}")
+def lumi_delete_user_key(provider: str):
+    """Remove a user-provided API key for the specified provider."""
+    from .user_key_store import get_user_key_store  # noqa: PLC0415
+    store = get_user_key_store()
+    removed = store.delete_key(provider)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"No key found for provider '{provider}'.")
+    return {"ok": True, "provider": provider, "message": f"{provider} key removed."}
 
 
 # ---------------------------------------------------------------------------

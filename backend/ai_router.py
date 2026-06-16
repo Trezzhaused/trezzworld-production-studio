@@ -12,6 +12,10 @@ Three-role model (from jailbreak-autoresearch):
 
 Local Ollama models (SuperGemma 26B etc.) are tried first when available.
 Set OLLAMA_HOST env var to override the default http://localhost:11434.
+
+User-key fallback: when the OpenRouter cascade is exhausted, the router will
+try any user-provided provider keys (OpenRouter, Google, OpenAI, Anthropic)
+before returning the "exhausted" message with upgrade guidance.
 """
 from __future__ import annotations
 
@@ -282,6 +286,169 @@ class AIRouter:
                 return max(0.0, min(1.0, val / (10.0 if val > 1.0 else 1.0)))
         return 0.0
 
+    # ------------------------------------------------------------------
+    # User-key fallback — direct provider calls when cascade is exhausted
+    # ------------------------------------------------------------------
+
+    def _call_openai_compatible(
+        self,
+        api_base: str,
+        api_key: str,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: float,
+        max_tokens: int,
+        extra_headers: dict[str, str] | None = None,
+    ) -> ChatResult:
+        """Call any OpenAI-compatible endpoint (OpenAI, Google Gemini, OpenRouter)."""
+        payload = json.dumps({
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }).encode("utf-8")
+        headers: dict[str, str] = {
+            "Authorization": "Bearer " + api_key,
+            "Content-Type": "application/json",
+        }
+        if extra_headers:
+            headers.update(extra_headers)
+        req = urllib.request.Request(api_base, data=payload, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                content = data["choices"][0]["message"]["content"]
+                return ChatResult(model=model, content=content, ok=True, usage=data.get("usage", {}))
+        except urllib.error.HTTPError as exc:
+            return ChatResult(model=model, content="", ok=False, error=f"HTTP {exc.code}: {exc.reason}")
+        except urllib.error.URLError as exc:
+            return ChatResult(model=model, content="", ok=False, error=f"URLError: {exc.reason}")
+        except (KeyError, json.JSONDecodeError, IndexError) as exc:
+            return ChatResult(model=model, content="", ok=False, error=f"ParseError: {exc}")
+
+    def _call_anthropic_direct(
+        self,
+        api_key: str,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: float,
+        max_tokens: int,
+    ) -> ChatResult:
+        """Call Anthropic's Messages API directly (non-OpenAI format)."""
+        # Extract system message if present
+        system = ""
+        chat_messages: list[dict[str, str]] = []
+        for m in messages:
+            if m["role"] == "system":
+                system = m["content"]
+            else:
+                chat_messages.append(m)
+
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": chat_messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if system:
+            body["system"] = system
+
+        payload = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                content = data["content"][0]["text"]
+                return ChatResult(model=model, content=content, ok=True)
+        except urllib.error.HTTPError as exc:
+            return ChatResult(model=model, content="", ok=False, error=f"HTTP {exc.code}: {exc.reason}")
+        except urllib.error.URLError as exc:
+            return ChatResult(model=model, content="", ok=False, error=f"URLError: {exc.reason}")
+        except (KeyError, json.JSONDecodeError, IndexError) as exc:
+            return ChatResult(model=model, content="", ok=False, error=f"ParseError: {exc}")
+
+    def chat_with_user_keys(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.72,
+        max_tokens: int = 1200,
+    ) -> ChatResult:
+        """
+        Fallback: try user-provided provider keys in priority order.
+        Called after the main OpenRouter cascade is exhausted.
+        """
+        from .user_key_store import get_user_key_store  # noqa: PLC0415
+        store = get_user_key_store()
+        providers = store.ordered_providers()
+
+        for provider, key in providers:
+            if provider == "openrouter":
+                # User's own OpenRouter key — try the free-tier cascade
+                user_router = AIRouter(api_key=key, timeout=self.timeout)
+                result = user_router.chat(messages, role="lumi", temperature=temperature, max_tokens=max_tokens)
+                if result.ok:
+                    return result
+
+            elif provider == "google":
+                # Google Gemini via OpenAI-compatible endpoint
+                result = self._call_openai_compatible(
+                    api_base="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                    api_key=key,
+                    model="gemini-2.0-flash",
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                if result.ok:
+                    return result
+                # Fallback to 1.5 flash if 2.0 fails
+                result = self._call_openai_compatible(
+                    api_base="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                    api_key=key,
+                    model="gemini-1.5-flash",
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                if result.ok:
+                    return result
+
+            elif provider == "openai":
+                # OpenAI via native endpoint
+                result = self._call_openai_compatible(
+                    api_base="https://api.openai.com/v1/chat/completions",
+                    api_key=key,
+                    model="gpt-4o-mini",
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                if result.ok:
+                    return result
+
+            elif provider == "anthropic":
+                # Anthropic via native Messages API
+                result = self._call_anthropic_direct(
+                    api_key=key,
+                    model="claude-haiku-4-5",
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                if result.ok:
+                    return result
+
+        return ChatResult(model="none", content="", ok=False, error="All user keys exhausted or not configured.")
+
     def lumi_chat(
         self,
         user_message: str,
@@ -293,6 +460,12 @@ class AIRouter:
         """
         LUMI conversational interface — the studio AI assistant.
         Maintains conversation history for multi-turn sessions.
+
+        Priority order:
+          1. Local Ollama (if use_ollama=True)
+          2. OpenRouter free-tier cascade (OPENROUTER_API_KEY)
+          3. User-provided provider keys (openrouter → google → openai → anthropic)
+          4. Helpful exhausted message with upgrade guidance
 
         Args:
             user_message: The user's message.
@@ -313,7 +486,7 @@ class AIRouter:
             messages.extend(history[-20:])
         messages.append({"role": "user", "content": user_message})
 
-        # Route to local Ollama when requested
+        # 1. Route to local Ollama when requested
         if use_ollama:
             from .ollama_provider import get_ollama  # noqa: PLC0415
             ollama = get_ollama()
@@ -325,7 +498,23 @@ class AIRouter:
                 return ChatResult(model=result.model, content=result.content, ok=True, usage=result.usage)
             # Fall through to OpenRouter if Ollama fails
 
-        return self.chat(messages, role="lumi", temperature=0.72, max_tokens=1200)
+        # 2. OpenRouter cascade (system key)
+        result = self.chat(messages, role="lumi", temperature=0.72, max_tokens=1200)
+        if result.ok:
+            return result
+
+        # 3. User-provided keys fallback
+        user_result = self.chat_with_user_keys(messages, temperature=0.72, max_tokens=1200)
+        if user_result.ok:
+            return user_result
+
+        # 4. All sources exhausted — return helpful guidance as LUMI response
+        return ChatResult(
+            model="none",
+            content=_build_exhausted_message(),
+            ok=False,
+            error="All models in cascade exhausted.",
+        )
 
     def researcher_propose(self, goal: str, context: str = "", prior_fragments: str = "") -> ChatResult:
         """
@@ -368,6 +557,50 @@ class AIRouter:
 
 # Module-level singleton (no API key required at import time)
 _router_instance: AIRouter | None = None
+
+
+def _build_exhausted_message() -> str:
+    """
+    Build a helpful in-chat message shown to the user when all AI sources are exhausted.
+    Guides them to add their own key, wait for rate limit reset, or upgrade.
+    """
+    from .user_key_store import PROVIDER_CATALOGUE  # noqa: PLC0415
+
+    lines = [
+        "Hi! I'm LUMI — TrezzWorld's AI assistant.",
+        "",
+        "I've temporarily run out of AI resources. All model sources in my cascade have been exhausted.",
+        "Here's how to get me back online:\n",
+        "─────────────────────────────────────────",
+        "OPTION 1 — Add your own AI account key (fastest fix)",
+        "─────────────────────────────────────────",
+    ]
+
+    for pid, info in sorted(PROVIDER_CATALOGUE.items(), key=lambda x: x[1]["priority"]):
+        star = " ⭐ RECOMMENDED" if info.get("recommended") else ""
+        lines.append(f"• {info['name']}{star}")
+        lines.append(f"  {info['description']}")
+        lines.append(f"  Cost: {info['cost']}")
+        lines.append(f"  Get key: {info['get_key_url']}")
+        lines.append("")
+
+    lines += [
+        "Once you have a key, connect it via:",
+        "  POST http://127.0.0.1:8000/api/lumi/user-key",
+        '  Body: {"provider": "openrouter", "api_key": "sk-or-..."}\n',
+        "─────────────────────────────────────────",
+        "OPTION 2 — Check back in 12 hours",
+        "─────────────────────────────────────────",
+        "Free-tier rate limits reset within 24 hours.",
+        "Come back later and I'll pick up right where we left off.\n",
+        "─────────────────────────────────────────",
+        "OPTION 3 — Upgrade via OpenRouter (lowest cost)",
+        "─────────────────────────────────────────",
+        "Add $5 credit at https://openrouter.ai — that's thousands of messages",
+        "using Gemini Flash or Llama models. No subscription required.",
+    ]
+
+    return "\n".join(lines)
 
 
 def get_router() -> AIRouter:
