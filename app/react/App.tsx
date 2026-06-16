@@ -724,7 +724,7 @@ export default function App() {
               </div>
               {!useOllama && (
                 <p style={hint}>Using OpenRouter free cascade: Gemini → DeepSeek → Llama → Mistral → Claude → GPT.<br/>
-                  Set <code>OPENROUTER_API_KEY</code> in Railway env vars, or add your key in the <strong>🤖 AI Models</strong> tab. <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>Get a free key →</a>
+                  Set <code>OPENROUTER_API_KEY</code> in Railway env vars, or add your key in the <strong>🤖 AI Models</strong> tab. <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" aria-label="Get a free OpenRouter API key" style={{ color: '#38bdf8' }}>Get a free key →</a>
                 </p>
               )}
             </div>
@@ -909,10 +909,10 @@ export default function App() {
                   <code style={{ opacity: 0.8 }}>ollama pull llama3.1:8b  &amp;&amp;  ollama pull mistral:7b</code>
                 </p>
                 <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                  <a href="https://ollama.com/download" target="_blank" rel="noreferrer" style={{ ...btn('secondary'), fontSize: '12px', padding: '7px 14px', textDecoration: 'none', display: 'inline-block' }}>
+                  <a href="https://ollama.com/download" target="_blank" rel="noreferrer" aria-label="Download Ollama installer" style={{ ...btn('secondary'), fontSize: '12px', padding: '7px 14px', textDecoration: 'none', display: 'inline-block' }}>
                     ⬇ Download Ollama
                   </a>
-                  <a href="https://github.com/Trezzhaused/trezzworld-production-studio#readme" target="_blank" rel="noreferrer" style={{ ...btn('secondary'), fontSize: '12px', padding: '7px 14px', textDecoration: 'none', display: 'inline-block' }}>
+                  <a href="https://github.com/Trezzhaused/trezzworld-production-studio#readme" target="_blank" rel="noreferrer" aria-label="View setup guide on GitHub" style={{ ...btn('secondary'), fontSize: '12px', padding: '7px 14px', textDecoration: 'none', display: 'inline-block' }}>
                     📖 Setup Guide on GitHub
                   </a>
                 </div>
@@ -999,7 +999,7 @@ export default function App() {
                 <button type="submit" disabled={addKeyLoading || !addKeyValue.trim()} style={btn('primary', addKeyLoading || !addKeyValue.trim())}>
                   {addKeyLoading ? 'Saving…' : '💾 Save Key'}
                 </button>
-                <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" style={{ fontSize: '12px', color: '#38bdf8' }}>
+                <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" aria-label="Get a free OpenRouter API key" style={{ fontSize: '12px', color: '#38bdf8' }}>
                   Get a free OpenRouter key →
                 </a>
               </div>
