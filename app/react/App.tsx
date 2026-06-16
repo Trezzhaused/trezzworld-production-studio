@@ -190,7 +190,7 @@ export default function App() {
 
   // ── Initial data load ──────────────────────────────────────────────────────
   useEffect(() => {
-    let mounted = true;
+    let isMounted = true;
     Promise.allSettled([
       fetchJson<BackendStatus>(`${API}/api/status`),
       fetchJson<MetaDevelopmentStatus>(`${API}/api/meta-development/status`),
@@ -200,7 +200,7 @@ export default function App() {
       fetchJson<ModelStatusResponse>(`${API}/api/lumi/models`),
       fetchJson<UserKeysResponse>(`${API}/api/lumi/user-keys`),
     ]).then(([bk, meta, mb, cp, ol, models, keys]) => {
-      if (!mounted) return;
+      if (!isMounted) return;
       if (bk.status === 'fulfilled') setBackendStatus(bk.value);
       if (meta.status === 'fulfilled') setMetaStatus(meta.value);
       if (mb.status === 'fulfilled') setMetaBuilderStatus(mb.value);
@@ -213,7 +213,7 @@ export default function App() {
       }
       if (keys.status === 'fulfilled') setUserKeys(keys.value);
     });
-    return () => { mounted = false; };
+    return () => { isMounted = false; };
   }, []);
 
   // ── Pipeline polling ───────────────────────────────────────────────────────
@@ -276,7 +276,7 @@ export default function App() {
       });
       setChatHistory(prev => [...prev, { role: 'assistant', content: data.content, model: data.model }]);
     } catch {
-      setChatHistory(prev => [...prev, { role: 'assistant', content: '⚠️ LUMI backend is unreachable. If this is deployed, check Railway deployment, runtime variables, and Cloudflare domain routing.' }]);
+      setChatHistory(prev => [...prev, { role: 'assistant', content: '⚠️ LUMI backend is unreachable. Check your deployment/runtime configuration and network connectivity.' }]);
     } finally { setLoadingChat(false); }
   };
 

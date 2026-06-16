@@ -132,9 +132,11 @@ _ENV_PROVIDER_VARS: dict[str, tuple[str, ...]] = {
 
 def _split_env_values(raw: str) -> list[str]:
     values: list[str] = []
+    seen: set[str] = set()
     for line in raw.replace(",", "\n").splitlines():
         cleaned = line.strip()
-        if cleaned and cleaned not in values:
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
             values.append(cleaned)
     return values
 
