@@ -190,17 +190,17 @@ export default function App() {
 
   // ── Initial data load ──────────────────────────────────────────────────────
   useEffect(() => {
-    let isMounted = true;
+    const aborter = new AbortController();
     Promise.allSettled([
-      fetchJson<BackendStatus>(`${API}/api/status`),
-      fetchJson<MetaDevelopmentStatus>(`${API}/api/meta-development/status`),
-      fetchJson<MetaBuilderStatus>(`${API}/api/meta-builder/status`),
-      fetchJson<ControlPlaneStatus>(`${API}/api/studio/control-plane`),
-      fetchJson<OllamaStatus>(`${API}/api/ollama/status`),
-      fetchJson<ModelStatusResponse>(`${API}/api/lumi/models`),
-      fetchJson<UserKeysResponse>(`${API}/api/lumi/user-keys`),
+      fetchJson<BackendStatus>(`${API}/api/status`, aborter.signal),
+      fetchJson<MetaDevelopmentStatus>(`${API}/api/meta-development/status`, aborter.signal),
+      fetchJson<MetaBuilderStatus>(`${API}/api/meta-builder/status`, aborter.signal),
+      fetchJson<ControlPlaneStatus>(`${API}/api/studio/control-plane`, aborter.signal),
+      fetchJson<OllamaStatus>(`${API}/api/ollama/status`, aborter.signal),
+      fetchJson<ModelStatusResponse>(`${API}/api/lumi/models`, aborter.signal),
+      fetchJson<UserKeysResponse>(`${API}/api/lumi/user-keys`, aborter.signal),
     ]).then(([bk, meta, mb, cp, ol, models, keys]) => {
-      if (!isMounted) return;
+      if (aborter.signal.aborted) return;
       if (bk.status === 'fulfilled') setBackendStatus(bk.value);
       if (meta.status === 'fulfilled') setMetaStatus(meta.value);
       if (mb.status === 'fulfilled') setMetaBuilderStatus(mb.value);
@@ -213,7 +213,7 @@ export default function App() {
       }
       if (keys.status === 'fulfilled') setUserKeys(keys.value);
     });
-    return () => { isMounted = false; };
+    return () => { aborter.abort(); };
   }, []);
 
   // ── Pipeline polling ───────────────────────────────────────────────────────
@@ -275,8 +275,16 @@ export default function App() {
         domain: chatDomain === 'default' ? null : chatDomain,
       });
       setChatHistory(prev => [...prev, { role: 'assistant', content: data.content, model: data.model }]);
-    } catch {
-      setChatHistory(prev => [...prev, { role: 'assistant', content: '⚠️ LUMI backend is unreachable. Check your deployment/runtime configuration and network connectivity.' }]);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '';
+      const content = detail === '429'
+        ? '⚠️ LUMI is rate-limited or out of provider credit right now. Check the configured provider balances or fallback keys.'
+        : detail === '401' || detail === '403'
+          ? '⚠️ LUMI rejected the current provider credentials. Check the runtime API keys configured on the backend.'
+          : detail.startsWith('5')
+            ? '⚠️ LUMI hit a backend/provider error. Check the deployment logs and runtime AI configuration.'
+            : '⚠️ LUMI backend is unreachable. Check your deployment/runtime configuration and network connectivity.';
+      setChatHistory(prev => [...prev, { role: 'assistant', content }]);
     } finally { setLoadingChat(false); }
   };
 
