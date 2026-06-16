@@ -509,11 +509,13 @@ class AIRouter:
             messages.extend(history[-20:])
         messages.append({"role": "user", "content": user_message})
 
-        # 1. Route to local Ollama when requested OR when no API key is configured
+        # Check Ollama availability once — used in steps 1 and 4
         from .ollama_provider import get_ollama  # noqa: PLC0415
         ollama = get_ollama()
+        ollama_available = ollama.is_available()
+
+        # 1. Route to local Ollama when requested OR when no API key is configured
         if use_ollama or not self.api_key:
-            ollama_available = ollama.is_available()
             if ollama_available:
                 if ollama_model:
                     oll_result = ollama.chat(ollama_model, messages, temperature=0.72, max_tokens=1200)
@@ -534,11 +536,10 @@ class AIRouter:
             return user_result
 
         # 4. Auto-try Ollama as last resort (when use_ollama=False and key was set but cascade failed)
-        if not use_ollama and self.api_key:
-            if ollama.is_available():
-                oll_result = ollama.super_gemma_chat(messages, temperature=0.72, max_tokens=1200)
-                if oll_result.ok:
-                    return ChatResult(model=oll_result.model, content=oll_result.content, ok=True, usage=oll_result.usage)
+        if not use_ollama and self.api_key and ollama_available:
+            oll_result = ollama.super_gemma_chat(messages, temperature=0.72, max_tokens=1200)
+            if oll_result.ok:
+                return ChatResult(model=oll_result.model, content=oll_result.content, ok=True, usage=oll_result.usage)
 
         # 5. All sources exhausted — return helpful guidance as LUMI response
         return ChatResult(
