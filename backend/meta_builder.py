@@ -7,6 +7,7 @@ from .meta_development import get_phase_definitions
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+GAP_PENALTY_PERCENTAGE = 9
 
 
 def _top_todo_hotspots(limit: int = 5) -> list[dict[str, Any]]:
@@ -85,7 +86,7 @@ def build_meta_builder_status() -> dict[str, Any]:
             }
         )
 
-    readiness_estimate = max(0, 100 - (len(gaps) * 9))
+    readiness_estimate = max(0, 100 - (len(gaps) * GAP_PENALTY_PERCENTAGE))
     summary = (
         "MetaBuilder is ready to operate as a continuous improvement loop."
         if not gaps
