@@ -1,22 +1,31 @@
-import { ProductionRequest, ScriptSegment } from '../orchestration/ProductionContracts';
+import { Generator } from '../capability/Generator';
 
-export class VideoDirector {
-  generateScript(request: ProductionRequest): ScriptSegment[] {
-    const totalSeconds = request.durationMinutes * 60;
-    const segmentCount = Math.max(3, Math.ceil(request.durationMinutes * 2));
-    const baseDuration = Math.floor(totalSeconds / segmentCount);
+export interface VideoRequest {
+  prompt: string;
+  durationMinutes: number;
+}
 
-    return Array.from({ length: segmentCount }, (_, index) => {
-      const isLast = index === segmentCount - 1;
-      const usedSeconds = baseDuration * index;
-      const remaining = totalSeconds - usedSeconds;
-      const durationSeconds = isLast ? remaining : baseDuration;
+export interface StoryboardShot {
+  id: string;
+  description: string;
+  seconds: number;
+}
 
-      return {
-        id: `script-${index + 1}`,
-        text: `${request.projectTitle ?? 'Project'} beat ${index + 1}: ${request.prompt}`,
-        durationSeconds,
-      };
-    });
+export class VideoDirector implements Generator<VideoRequest, StoryboardShot[]> {
+  readonly id = 'video-director';
+
+  canHandle(input: VideoRequest): boolean {
+    return input.durationMinutes > 0;
+  }
+
+  async generate(input: VideoRequest): Promise<StoryboardShot[]> {
+    const shotCount = Math.max(6, input.durationMinutes * 4);
+    const seconds = Math.max(2, Math.floor((input.durationMinutes * 60) / shotCount));
+
+    return Array.from({ length: shotCount }, (_, index) => ({
+      id: `shot-${index + 1}`,
+      description: `${input.prompt} — shot ${index + 1}`,
+      seconds,
+    }));
   }
 }
