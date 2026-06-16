@@ -41,12 +41,11 @@ jobs:
             echo "::error::Name: RAILWAY_SERVICE (service name) or RAILWAY_SERVICE_ID (service id)"
             exit 1
           fi
-          DELIM="$(openssl rand -hex 8)"
-          {
-            echo "TARGET_SERVICE<<$DELIM"
-            echo "$TARGET_SERVICE"
-            echo "$DELIM"
-          } >> "$GITHUB_ENV"
+          if printf '%s' "$TARGET_SERVICE" | grep -q '[[:cntrl:]]'; then
+            echo "::error::RAILWAY service value contains unsupported control characters."
+            exit 1
+          fi
+          echo "TARGET_SERVICE=$TARGET_SERVICE" >> "$GITHUB_ENV"
 
       # ── 4. Deploy to Railway (builds Dockerfile automatically) ────────────
       - name: Deploy via Railway
@@ -54,8 +53,8 @@ jobs:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
         run: |
+          DEPLOY_ARGS=(--service "$TARGET_SERVICE" --detach)
           if [ -n "$RAILWAY_PROJECT_ID" ]; then
-            railway up --project "$RAILWAY_PROJECT_ID" --service "$TARGET_SERVICE" --detach
-          else
-            railway up --service "$TARGET_SERVICE" --detach
+            DEPLOY_ARGS=(--project "$RAILWAY_PROJECT_ID" "${DEPLOY_ARGS[@]}")
           fi
+          railway up "${DEPLOY_ARGS[@]}"
