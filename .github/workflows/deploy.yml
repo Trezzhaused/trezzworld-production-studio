@@ -41,7 +41,12 @@ jobs:
             echo "::error::Name: RAILWAY_SERVICE (service name) or RAILWAY_SERVICE_ID (service id)"
             exit 1
           fi
-          echo "TARGET_SERVICE=$TARGET_SERVICE" >> "$GITHUB_ENV"
+          DELIM="$(openssl rand -hex 8)"
+          {
+            echo "TARGET_SERVICE<<$DELIM"
+            echo "$TARGET_SERVICE"
+            echo "$DELIM"
+          } >> "$GITHUB_ENV"
 
       # ── 4. Deploy to Railway (builds Dockerfile automatically) ────────────
       - name: Deploy via Railway
