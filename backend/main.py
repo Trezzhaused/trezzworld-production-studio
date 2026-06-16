@@ -17,6 +17,9 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:8000",
         "https://app.trezzhaus.com",
+        "https://studio.trezzhaus.com",
+        "https://trezzhaus.com",
+        "https://www.trezzhaus.com",
     ],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
@@ -265,13 +268,26 @@ def lumi_models():
     """Return the configured AI model cascade (OpenRouter + Ollama)."""
     from .ai_router import get_router  # noqa: PLC0415
     from .ollama_provider import get_ollama  # noqa: PLC0415
+    router = get_router()
     ollama = get_ollama()
     return {
-        "cascade": get_router().cascade_info(),
+        "cascade": router.cascade_info(),
         "ollama": {
             "available": ollama.is_available(),
             "host": ollama.host,
+            "authConfigured": bool(ollama.api_key),
             "catalogue": ollama.catalogue(),
+        },
+        "systemProviders": router.system_provider_status(),
+        "failover": {
+            "autoSwitching": True,
+            "routeOrder": [
+                "Requested Ollama / remote Ollama",
+                "System OpenRouter cascade",
+                "System provider API keys",
+                "Saved user backup keys",
+                "Ollama last resort",
+            ],
         },
     }
 
@@ -289,6 +305,7 @@ def ollama_status():
     return {
         "available": available,
         "host": ollama.host,
+        "authConfigured": bool(ollama.api_key),
         "localModels": ollama.list_local_models() if available else [],
         "catalogue": ollama.catalogue(),
         "superGemmaReady": any(

@@ -22,8 +22,15 @@ interface PipelineProgress { total: number; completed: number; running: number; 
 interface PipelineStatus { id: string; status: string; summary: string; jobs: QueueItem[]; progress: PipelineProgress; }
 interface ChatMessage { role: 'user' | 'assistant'; content: string; model?: string; }
 interface OllamaModel { id: string; family: string; label: string; available: boolean; }
-interface OllamaStatus { available: boolean; host: string; localModels: Array<{ name: string }>; catalogue: OllamaModel[]; superGemmaReady: boolean; installHint: string; }
+interface OllamaStatus { available: boolean; host: string; authConfigured: boolean; localModels: Array<{ name: string }>; catalogue: OllamaModel[]; superGemmaReady: boolean; installHint: string; }
 interface ModelCascadeEntry { id: string; tier: string; priority: number; }
+interface SystemProviderStatus { provider: string; name: string; configured: boolean; sources: string[]; key_count: number; priority: number; }
+interface ModelStatusResponse {
+  cascade: ModelCascadeEntry[];
+  ollama: { available: boolean; host: string; authConfigured: boolean; catalogue: OllamaModel[]; };
+  systemProviders: SystemProviderStatus[];
+  failover: { autoSwitching: boolean; routeOrder: string[]; };
+}
 interface VideoStoryboardScene { id: string; title: string; duration_seconds: number; visual_description: string; text_overlay?: string; transition_in: string; transition_out: string; camera_motion: string; color_grade: string; }
 interface VideoStoryboard { title?: string; logline?: string; style?: string; total_duration_seconds?: number; color_palette?: string[]; audio?: Record<string, unknown>; scenes?: VideoStoryboardScene[]; }
 interface VideoJob { jobId: string; concept: string; durationSeconds: number; style: string; resolution: string; fps: number; status: string; progress: number; message: string; storyboard: VideoStoryboard; outputPath: string | null; downloadReady: boolean; error: string | null; createdAt: number; }
@@ -120,6 +127,8 @@ export default function App() {
   const [controlPlane, setControlPlane] = useState<ControlPlaneStatus | null>(null);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [openRouterCascade, setOpenRouterCascade] = useState<ModelCascadeEntry[]>([]);
+  const [systemProviders, setSystemProviders] = useState<SystemProviderStatus[]>([]);
+  const [failoverRoute, setFailoverRoute] = useState<string[]>([]);
 
   // Mission
   const [missionPrompt, setMissionPrompt] = useState('Build a Roblox game called TrezzWorld Adventures, create original 3D assets, music, voice acting, a 5-minute cinematic trailer, website, documentation, marketing campaign, and prepare everything for publishing.');
@@ -187,8 +196,8 @@ export default function App() {
       fetchJson<MetaDevelopmentStatus>(`${API}/api/meta-development/status`),
       fetchJson<MetaBuilderStatus>(`${API}/api/meta-builder/status`),
       fetchJson<ControlPlaneStatus>(`${API}/api/studio/control-plane`),
-      fetchJson<{ available: boolean; host: string; localModels: Array<{name:string}>; catalogue: OllamaModel[]; superGemmaReady: boolean; installHint: string }>(`${API}/api/ollama/status`),
-      fetchJson<{ cascade: ModelCascadeEntry[] }>(`${API}/api/lumi/models`),
+      fetchJson<OllamaStatus>(`${API}/api/ollama/status`),
+      fetchJson<ModelStatusResponse>(`${API}/api/lumi/models`),
       fetchJson<UserKeysResponse>(`${API}/api/lumi/user-keys`),
     ]).then(([bk, meta, mb, cp, ol, models, keys]) => {
       if (!mounted) return;
@@ -197,7 +206,11 @@ export default function App() {
       if (mb.status === 'fulfilled') setMetaBuilderStatus(mb.value);
       if (cp.status === 'fulfilled') setControlPlane(cp.value);
       if (ol.status === 'fulfilled') setOllamaStatus(ol.value);
-      if (models.status === 'fulfilled') setOpenRouterCascade(models.value.cascade ?? []);
+      if (models.status === 'fulfilled') {
+        setOpenRouterCascade(models.value.cascade ?? []);
+        setSystemProviders(models.value.systemProviders ?? []);
+        setFailoverRoute(models.value.failover?.routeOrder ?? []);
+      }
       if (keys.status === 'fulfilled') setUserKeys(keys.value);
     });
     return () => { mounted = false; };
@@ -263,7 +276,7 @@ export default function App() {
       });
       setChatHistory(prev => [...prev, { role: 'assistant', content: data.content, model: data.model }]);
     } catch {
-      setChatHistory(prev => [...prev, { role: 'assistant', content: '⚠️ LUMI unavailable. Start backend + set OPENROUTER_API_KEY (or start Ollama).' }]);
+      setChatHistory(prev => [...prev, { role: 'assistant', content: '⚠️ LUMI backend is unreachable. If this is deployed, check Railway deployment, runtime variables, and Cloudflare domain routing.' }]);
     } finally { setLoadingChat(false); }
   };
 
@@ -369,6 +382,14 @@ export default function App() {
   const isBackendUp = !!backendStatus;
   const isOllamaUp = ollamaStatus?.available ?? false;
   const availableOllamaModels = ollamaStatus?.catalogue.filter(m => m.available) ?? [];
+  const configuredSystemProviders = systemProviders.filter(provider => provider.configured);
+  const systemAiReady = configuredSystemProviders.length > 0;
+  const userBackupKeyCount = userKeys?.configured_count ?? 0;
+  const autoRouteSummary = systemAiReady
+    ? `Auto failover active across ${configuredSystemProviders.map(provider => provider.name).join(' → ')}${isOllamaUp ? ' → Ollama' : ''}.`
+    : isOllamaUp
+      ? 'Ollama is online, but no cloud provider keys were detected in the backend runtime.'
+      : 'No cloud provider keys were detected in the backend runtime yet.';
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -391,6 +412,7 @@ export default function App() {
         </div>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '13px' }}>
           <StatusDot ok={isBackendUp} /><span style={{ opacity: 0.7 }}>Backend</span>
+          <StatusDot ok={systemAiReady || isOllamaUp} /><span style={{ opacity: 0.7 }}>AI Routing</span>
           <StatusDot ok={isOllamaUp} /><span style={{ opacity: 0.7 }}>Ollama</span>
         </div>
       </header>
@@ -524,8 +546,10 @@ export default function App() {
                 </select>
               </div>
               {!useOllama && (
-                <p style={hint}>Using OpenRouter free cascade: Gemini → DeepSeek → Llama → Mistral → Claude → GPT.<br/>
-                  Set <code>OPENROUTER_API_KEY</code> in Railway env vars, or add your key in the <strong>🤖 AI Models</strong> tab. <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" aria-label="Get a free OpenRouter API key" style={{ color: '#38bdf8' }}>Get a free key →</a>
+                <p style={hint}>
+                  {systemAiReady
+                    ? `${autoRouteSummary} LUMI keeps switching providers automatically as quotas or credits change.`
+                    : 'Human touch needed: add OPENROUTER_API_KEY, GOOGLE_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY to the runtime service variables so cloud failover can start.'}
                 </p>
               )}
             </div>
@@ -675,7 +699,57 @@ export default function App() {
         <div style={pageWrap}>
           <section style={heroCard}>
             <h1 style={{ margin: '0 0 6px', fontSize: '22px' }}>🤖 AI Models</h1>
-            <p style={{ margin: 0, opacity: 0.8, fontSize: '14px' }}>OpenRouter cloud cascade + local Ollama (SuperGemma 26B). LUMI routes intelligently across all models.</p>
+            <p style={{ margin: 0, opacity: 0.8, fontSize: '14px' }}>LUMI auto-switches across runtime provider keys, the OpenRouter cascade, saved backup keys, and Ollama.</p>
+          </section>
+
+          <section style={card}>
+            <h2 style={h2style}>🧠 AI Routing Status</h2>
+            <div style={{ ...grid, marginBottom: '14px' }}>
+              <div style={{ ...listItem, background: systemAiReady ? 'rgba(34,197,94,0.08)' : 'rgba(250,204,21,0.08)' }}>
+                <strong style={{ fontSize: '13px' }}>Platform Providers</strong>
+                <p style={{ margin: '6px 0 0', fontSize: '12px', opacity: 0.75 }}>
+                  {systemAiReady ? `${configuredSystemProviders.length} runtime provider${configuredSystemProviders.length === 1 ? '' : 's'} connected.` : 'No runtime provider keys detected.'}
+                </p>
+              </div>
+              <div style={{ ...listItem, background: userBackupKeyCount > 0 ? 'rgba(56,189,248,0.08)' : 'rgba(148,163,184,0.05)' }}>
+                <strong style={{ fontSize: '13px' }}>Saved Backup Keys</strong>
+                <p style={{ margin: '6px 0 0', fontSize: '12px', opacity: 0.75 }}>{userBackupKeyCount} optional overflow key{userBackupKeyCount === 1 ? '' : 's'} saved.</p>
+              </div>
+              <div style={{ ...listItem, background: isOllamaUp ? 'rgba(34,197,94,0.08)' : 'rgba(148,163,184,0.05)' }}>
+                <strong style={{ fontSize: '13px' }}>Ollama Fallback</strong>
+                <p style={{ margin: '6px 0 0', fontSize: '12px', opacity: 0.75 }}>{isOllamaUp ? `Online at ${ollamaStatus?.host}` : 'Offline'}</p>
+              </div>
+            </div>
+            <p style={{ ...hint, marginBottom: '14px' }}>{autoRouteSummary}</p>
+            {!systemAiReady && (
+              <div style={{ ...card, background: 'rgba(250,204,21,0.07)', border: '1px solid rgba(250,204,21,0.2)', padding: '14px 16px' }}>
+                <p style={{ margin: 0, fontSize: '13px' }}>
+                  <strong style={{ color: '#fde68a' }}>Human touch required:</strong> add one or more runtime variables on Railway or your host:
+                  <br /><code style={{ opacity: 0.8 }}>OPENROUTER_API_KEY</code> · <code style={{ opacity: 0.8 }}>GOOGLE_API_KEY</code> · <code style={{ opacity: 0.8 }}>OPENAI_API_KEY</code> · <code style={{ opacity: 0.8 }}>ANTHROPIC_API_KEY</code>
+                </p>
+              </div>
+            )}
+            <div style={{ ...grid, marginTop: '14px' }}>
+              {systemProviders.map(provider => (
+                <div key={provider.provider} style={{ ...listItem, opacity: provider.configured ? 1 : 0.72 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong style={{ fontSize: '13px' }}>{provider.name}</strong>
+                    <span style={pill(provider.configured ? 'active' : 'planned')}>{provider.configured ? `${provider.key_count} key${provider.key_count === 1 ? '' : 's'}` : 'not detected'}</span>
+                  </div>
+                  <p style={{ margin: '5px 0 0', fontSize: '11px', opacity: 0.55 }}>
+                    {provider.configured ? `Runtime vars: ${provider.sources.join(', ')}` : 'Waiting for runtime service variable'}
+                  </p>
+                </div>
+              ))}
+            </div>
+            {failoverRoute.length > 0 && (
+              <div style={{ marginTop: '14px' }}>
+                <h3 style={{ fontSize: '13px', opacity: 0.7, marginBottom: '10px' }}>Route Order</h3>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {failoverRoute.map(step => <span key={step} style={pill('in-progress')}>{step}</span>)}
+                </div>
+              </div>
+            )}
           </section>
 
           {/* Ollama status */}
@@ -685,7 +759,7 @@ export default function App() {
               <div style={{ ...card, flex: 1, minWidth: '180px', background: isOllamaUp ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)', border: `1px solid ${isOllamaUp ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}` }}>
                 <p style={{ margin: '0 0 4px', fontSize: '12px', opacity: 0.7 }}>Status</p>
                 <strong style={{ color: isOllamaUp ? '#86efac' : '#fca5a5' }}>{isOllamaUp ? '✅ Running' : '⚠️ Offline'}</strong>
-                <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.6 }}>{ollamaStatus?.host ?? 'http://localhost:11434'}</p>
+                <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.6 }}>{ollamaStatus?.host ?? 'http://localhost:11434'}{ollamaStatus?.authConfigured ? ' · auth enabled' : ''}</p>
               </div>
               <div style={{ ...card, flex: 1, minWidth: '180px', background: ollamaStatus?.superGemmaReady ? 'rgba(56,189,248,0.08)' : 'rgba(148,163,184,0.05)' }}>
                 <p style={{ margin: '0 0 4px', fontSize: '12px', opacity: 0.7 }}>SuperGemma 26B</p>
@@ -737,7 +811,7 @@ export default function App() {
           {/* OpenRouter cascade */}
           <section style={card}>
             <h2 style={h2style}>☁️ OpenRouter Cascade</h2>
-            <p style={hint}>Free-first waterfall: Free tier → Low-cost → Premium. Set <code>OPENROUTER_API_KEY</code> in backend/.env</p>
+            <p style={hint}>Free-first waterfall: Free tier → Low-cost → Premium. This route is used automatically whenever an OpenRouter key is available at runtime.</p>
             <div style={{ ...grid, marginTop: '14px', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
               {openRouterCascade.map(m => (
                 <div key={m.id} style={listItem}>
@@ -753,8 +827,8 @@ export default function App() {
 
           {/* API Key management */}
           <section style={card}>
-            <h2 style={h2style}>🔑 API Keys</h2>
-            <p style={hint}>Add your own provider API keys. LUMI uses them as a fallback when the system OpenRouter cascade is exhausted. Keys are stored in the backend database — never sent to the browser.</p>
+            <h2 style={h2style}>🔑 Optional Backup Keys</h2>
+            <p style={hint}>Platform-managed runtime keys should handle normal traffic. These saved keys are optional overflow capacity for extra accounts. Keys are stored in the backend database — never sent to the browser.</p>
 
             {userKeys && userKeys.configured_count > 0 && (
               <div style={{ marginBottom: '16px', display: 'grid', gap: '8px' }}>

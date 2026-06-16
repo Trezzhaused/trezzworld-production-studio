@@ -69,7 +69,14 @@ class OllamaProvider:
 
     def __init__(self, host: str | None = None, timeout: int = 120) -> None:
         self.host = (host or os.environ.get("OLLAMA_HOST", OLLAMA_DEFAULT_HOST)).rstrip("/")
+        self.api_key = os.environ.get("OLLAMA_API_KEY", "").strip()
         self.timeout = timeout
+
+    def _headers(self) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        if self.api_key:
+            headers["Authorization"] = "Bearer " + self.api_key
+        return headers
 
     # ------------------------------------------------------------------
     # Status probe
@@ -78,7 +85,7 @@ class OllamaProvider:
     def is_available(self) -> bool:
         """Return True if Ollama is reachable."""
         try:
-            req = urllib.request.Request(f"{self.host}/api/tags", method="GET")
+            req = urllib.request.Request(f"{self.host}/api/tags", headers=self._headers(), method="GET")
             with urllib.request.urlopen(req, timeout=3):
                 return True
         except Exception:
@@ -87,7 +94,7 @@ class OllamaProvider:
     def list_local_models(self) -> list[dict[str, Any]]:
         """Return models currently pulled in the local Ollama registry."""
         try:
-            req = urllib.request.Request(f"{self.host}/api/tags", method="GET")
+            req = urllib.request.Request(f"{self.host}/api/tags", headers=self._headers(), method="GET")
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return data.get("models", [])
@@ -126,7 +133,10 @@ class OllamaProvider:
         req = urllib.request.Request(
             f"{self.host}/api/chat",
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                **self._headers(),
+            },
             method="POST",
         )
         try:

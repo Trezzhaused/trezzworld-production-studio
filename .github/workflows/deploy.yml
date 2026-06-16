@@ -61,7 +61,8 @@ jobs:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+          RAILWAY_ENVIRONMENT: ${{ vars.RAILWAY_ENVIRONMENT }}
         run: |
-          DEPLOY_ARGS=(--service "$TARGET_SERVICE" --detach)
+          DEPLOY_ARGS=(--service "$TARGET_SERVICE" --environment "${RAILWAY_ENVIRONMENT:-production}" --detach)
           DEPLOY_ARGS=(--project "$RAILWAY_PROJECT_ID" "${DEPLOY_ARGS[@]}")
           railway up "${DEPLOY_ARGS[@]}"

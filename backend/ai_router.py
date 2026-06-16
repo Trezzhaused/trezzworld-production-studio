@@ -122,6 +122,21 @@ _ROLE_MODELS: dict[str, list[str]] = {
 
 _REFERER = "https://github.com/Trezzhaused/trezzworld-production-studio"
 _APP_TITLE = "TrezzWorld Production Studio - LUMI"
+_ENV_PROVIDER_VARS: dict[str, tuple[str, ...]] = {
+    "openrouter": ("OPENROUTER_API_KEY", "OPENROUTER_API_KEYS"),
+    "google": ("GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"),
+    "openai": ("OPENAI_API_KEY", "OPENAI_API_KEYS"),
+    "anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_API_KEYS"),
+}
+
+
+def _split_env_values(raw: str) -> list[str]:
+    values: list[str] = []
+    for line in raw.replace(",", "\n").splitlines():
+        cleaned = line.strip()
+        if cleaned and cleaned not in values:
+            values.append(cleaned)
+    return values
 
 
 @dataclass
@@ -398,6 +413,109 @@ class AIRouter:
         except (KeyError, json.JSONDecodeError, IndexError) as exc:
             return ChatResult(model=model, content="", ok=False, error=f"ParseError: {exc}")
 
+    def _provider_key_entries(self, include_primary_openrouter: bool = True) -> list[tuple[str, str, str]]:
+        entries: list[tuple[str, str, str]] = []
+        for provider in ("openrouter", "google", "openai", "anthropic"):
+            env_vars = _ENV_PROVIDER_VARS[provider]
+            for env_var in env_vars:
+                raw = os.environ.get(env_var, "")
+                if not raw:
+                    continue
+                for key in _split_env_values(raw):
+                    if provider == "openrouter" and not include_primary_openrouter and key == self.api_key:
+                        continue
+                    if (provider, key, env_var) not in entries:
+                        entries.append((provider, key, env_var))
+        return entries
+
+    def system_provider_status(self) -> list[dict[str, Any]]:
+        from .user_key_store import PROVIDER_CATALOGUE  # noqa: PLC0415
+
+        entries = self._provider_key_entries(include_primary_openrouter=True)
+        configured_map: dict[str, list[str]] = {}
+        for provider, _, env_var in entries:
+            configured_map.setdefault(provider, [])
+            if env_var not in configured_map[provider]:
+                configured_map[provider].append(env_var)
+
+        return [
+            {
+                "provider": provider,
+                "name": PROVIDER_CATALOGUE[provider]["name"],
+                "configured": provider in configured_map,
+                "sources": configured_map.get(provider, []),
+                "key_count": sum(1 for entry in entries if entry[0] == provider),
+                "priority": PROVIDER_CATALOGUE[provider]["priority"],
+            }
+            for provider in sorted(PROVIDER_CATALOGUE, key=lambda pid: PROVIDER_CATALOGUE[pid]["priority"])
+        ]
+
+    def _try_provider_key(
+        self,
+        provider: str,
+        key: str,
+        messages: list[dict[str, str]],
+        temperature: float,
+        max_tokens: int,
+    ) -> ChatResult:
+        if provider == "openrouter":
+            provider_router = AIRouter(api_key=key, timeout=self.timeout)
+            return provider_router.chat(messages, role="lumi", temperature=temperature, max_tokens=max_tokens)
+
+        if provider == "google":
+            result = self._call_openai_compatible(
+                api_base="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                api_key=key,
+                model="gemini-2.0-flash",
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            if result.ok:
+                return result
+            return self._call_openai_compatible(
+                api_base="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                api_key=key,
+                model="gemini-1.5-flash",
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+        if provider == "openai":
+            return self._call_openai_compatible(
+                api_base="https://api.openai.com/v1/chat/completions",
+                api_key=key,
+                model="gpt-4o-mini",
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+        if provider == "anthropic":
+            return self._call_anthropic_direct(
+                api_key=key,
+                model="claude-haiku-4-5",
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+        return ChatResult(model="none", content="", ok=False, error=f"Unsupported provider '{provider}'.")
+
+    def chat_with_system_keys(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.72,
+        max_tokens: int = 1200,
+    ) -> ChatResult:
+        """Fallback: try runtime-configured provider keys from environment variables."""
+        for provider, key, _ in self._provider_key_entries(include_primary_openrouter=False):
+            result = self._try_provider_key(provider, key, messages, temperature, max_tokens)
+            if result.ok:
+                return result
+        return ChatResult(model="none", content="", ok=False, error="All system provider keys exhausted or not configured.")
+
     def chat_with_user_keys(
         self,
         messages: list[dict[str, str]],
@@ -413,61 +531,9 @@ class AIRouter:
         providers = store.ordered_providers()
 
         for provider, key in providers:
-            if provider == "openrouter":
-                # User's own OpenRouter key — try the free-tier cascade
-                user_router = AIRouter(api_key=key, timeout=self.timeout)
-                result = user_router.chat(messages, role="lumi", temperature=temperature, max_tokens=max_tokens)
-                if result.ok:
-                    return result
-
-            elif provider == "google":
-                # Google Gemini via OpenAI-compatible endpoint
-                result = self._call_openai_compatible(
-                    api_base="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-                    api_key=key,
-                    model="gemini-2.0-flash",
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-                if result.ok:
-                    return result
-                # Fallback to 1.5 flash if 2.0 fails
-                result = self._call_openai_compatible(
-                    api_base="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-                    api_key=key,
-                    model="gemini-1.5-flash",
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-                if result.ok:
-                    return result
-
-            elif provider == "openai":
-                # OpenAI via native endpoint
-                result = self._call_openai_compatible(
-                    api_base="https://api.openai.com/v1/chat/completions",
-                    api_key=key,
-                    model="gpt-4o-mini",
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-                if result.ok:
-                    return result
-
-            elif provider == "anthropic":
-                # Anthropic via native Messages API
-                result = self._call_anthropic_direct(
-                    api_key=key,
-                    model="claude-haiku-4-5",
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-                if result.ok:
-                    return result
+            result = self._try_provider_key(provider, key, messages, temperature, max_tokens)
+            if result.ok:
+                return result
 
         return ChatResult(model="none", content="", ok=False, error="All user keys exhausted or not configured.")
 
@@ -530,21 +596,26 @@ class AIRouter:
         if result.ok:
             return result
 
-        # 3. User-provided keys fallback
+        # 3. Runtime-configured provider keys fallback
+        system_result = self.chat_with_system_keys(messages, temperature=0.72, max_tokens=1200)
+        if system_result.ok:
+            return system_result
+
+        # 4. User-provided keys fallback
         user_result = self.chat_with_user_keys(messages, temperature=0.72, max_tokens=1200)
         if user_result.ok:
             return user_result
 
-        # 4. Auto-try Ollama as last resort (when use_ollama=False and key was set but cascade failed)
+        # 5. Auto-try Ollama as last resort (when use_ollama=False and key was set but cascade failed)
         if not use_ollama and self.api_key and ollama_available:
             oll_result = ollama.super_gemma_chat(messages, temperature=0.72, max_tokens=1200)
             if oll_result.ok:
                 return ChatResult(model=oll_result.model, content=oll_result.content, ok=True, usage=oll_result.usage)
 
-        # 5. All sources exhausted — return helpful guidance as LUMI response
+        # 6. All sources exhausted — return helpful guidance as LUMI response
         return ChatResult(
             model="none",
-            content=_build_exhausted_message(),
+            content=_build_exhausted_message(self.system_provider_status(), ollama_available),
             ok=False,
             error="All models in cascade exhausted.",
         )
@@ -592,56 +663,41 @@ class AIRouter:
 _router_instance: AIRouter | None = None
 
 
-def _build_exhausted_message() -> str:
+def _build_exhausted_message(system_providers: list[dict[str, Any]], ollama_available: bool) -> str:
     """
     Build a helpful in-chat message shown to the user when all AI sources are exhausted.
-    Guides them to add their own key, wait for rate limit reset, or upgrade.
+    Highlights what human follow-up is needed when automatic failover cannot recover.
     """
-    from .user_key_store import PROVIDER_CATALOGUE  # noqa: PLC0415
+    configured = [provider["name"] for provider in system_providers if provider["configured"]]
+    configured_text = ", ".join(configured) if configured else "none detected"
 
     lines = [
-        "Hi! I'm LUMI — TrezzWorld's AI assistant.",
+        "LUMI automatic failover is temporarily exhausted.",
+        f"Platform-managed providers detected at runtime: {configured_text}.",
+        f"Ollama fallback: {'online' if ollama_available else 'offline'}.",
         "",
-        "I've temporarily run out of AI resources. All model sources in my cascade have been exhausted.",
-        "Here's how to get me back online:\n",
-        "─────────────────────────────────────────",
-        "OPTION 1 — Run Ollama locally (100% FREE, no account needed) ⭐",
-        "─────────────────────────────────────────",
-        "Install Ollama: https://ollama.com/download",
-        "Then run these two commands in your terminal:",
-        "  ollama serve",
-        "  ollama pull gemma3:27b",
-        "Once Ollama is running, switch to '🖥️ Ollama (local)' in the AI Models tab,",
-        "or just ask me anything — I'll automatically use it when available.\n",
-        "─────────────────────────────────────────",
-        "OPTION 2 — Add your own AI account key",
-        "─────────────────────────────────────────",
+        "Human touch needed:",
     ]
 
-    for pid, info in sorted(PROVIDER_CATALOGUE.items(), key=lambda x: x[1]["priority"]):
-        star = " ⭐ RECOMMENDED" if info.get("recommended") else ""
-        lines.append(f"• {info['name']}{star}")
-        lines.append(f"  {info['description']}")
-        lines.append(f"  Cost: {info['cost']}")
-        lines.append(f"  Get key: {info['get_key_url']}")
-        lines.append("")
+    if configured:
+        lines.extend([
+            "• Verify the active provider credits / rate limits on the configured accounts.",
+            "• Confirm the runtime service variables on Railway still contain valid provider keys.",
+            "• Redeploy after rotating or topping up any provider that is exhausted.",
+        ])
+    else:
+        lines.extend([
+            "• No runtime provider keys were detected by the backend.",
+            "• Add one or more of these Railway variables: OPENROUTER_API_KEY, GOOGLE_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY.",
+            "• Redeploy so the backend can load the updated runtime environment.",
+        ])
 
-    lines += [
-        "Once you have a key, go to the 🤖 AI Models tab → API Keys section and add it there.",
-        "Or connect it directly via:",
-        "  POST http://127.0.0.1:8000/api/lumi/user-key",
-        '  Body: {"provider": "openrouter", "api_key": "sk-or-..."}\n',
-        "─────────────────────────────────────────",
-        "OPTION 3 — Check back in 12 hours",
-        "─────────────────────────────────────────",
-        "Free-tier rate limits reset within 24 hours.",
-        "Come back later and I'll pick up right where we left off.\n",
-        "─────────────────────────────────────────",
-        "OPTION 4 — Upgrade via OpenRouter (lowest cost)",
-        "─────────────────────────────────────────",
-        "Add $5 credit at https://openrouter.ai — that's thousands of messages",
-        "using Gemini Flash or Llama models. No subscription required.",
-    ]
+    lines.extend([
+        "",
+        "Optional extra capacity:",
+        "• Run Ollama or set OLLAMA_HOST / OLLAMA_API_KEY for a hosted Ollama instance.",
+        "• Save additional backup keys in the AI Models tab if you want per-user overflow capacity.",
+    ])
 
     return "\n".join(lines)
 
