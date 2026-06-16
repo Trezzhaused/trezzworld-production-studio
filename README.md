@@ -110,6 +110,8 @@ Distributables are written to the `release/` folder.
 | GET | `/api/meta-development/status` | Returns roadmap phases, repository intelligence, and readiness checks |
 | GET | `/api/meta-builder/status` | Returns MetaBuilder gap analysis, next actions, and autonomy readiness estimate |
 | POST | `/api/meta-builder/continue` | Generates the next autonomous action batch from a high-level objective |
+| GET | `/api/studio/control-plane` | Returns the ready-to-start studio GUI/control-plane model |
+| POST | `/api/studio/control-plane/boot` | Bootstraps a prompt-driven LUMI mission batch for the control plane |
 | GET | `/docs` | FastAPI interactive docs (Swagger UI) |
 
 ---
