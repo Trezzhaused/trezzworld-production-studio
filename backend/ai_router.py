@@ -302,7 +302,7 @@ class AIRouter:
             domain: Creative domain for prompt enhancement
                     ('video'|'music'|'game'|'code'|'creative').
         """
-        from .lumi_prompt_enhancer import enhance_prompt  # noqa: PLC0415
+        from .lumi_prompt_enhancer import detect_domain, enhance_prompt  # noqa: PLC0415
 
         resolved_domain = domain or detect_domain(user_message)
         enhanced = enhance_prompt(user_message, domain=resolved_domain)
