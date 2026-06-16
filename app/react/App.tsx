@@ -24,7 +24,9 @@ interface ChatMessage { role: 'user' | 'assistant'; content: string; model?: str
 interface OllamaModel { id: string; family: string; label: string; available: boolean; }
 interface OllamaStatus { available: boolean; host: string; localModels: Array<{ name: string }>; catalogue: OllamaModel[]; superGemmaReady: boolean; installHint: string; }
 interface ModelCascadeEntry { id: string; tier: string; priority: number; }
-interface VideoJob { jobId: string; concept: string; durationSeconds: number; style: string; resolution: string; fps: number; status: string; progress: number; message: string; storyboard: Record<string, unknown>; outputPath: string | null; downloadReady: boolean; error: string | null; createdAt: number; }
+interface VideoStoryboardScene { id: string; title: string; duration_seconds: number; visual_description: string; text_overlay?: string; transition_in: string; transition_out: string; camera_motion: string; color_grade: string; }
+interface VideoStoryboard { title?: string; logline?: string; style?: string; total_duration_seconds?: number; color_palette?: string[]; audio?: Record<string, unknown>; scenes?: VideoStoryboardScene[]; }
+interface VideoJob { jobId: string; concept: string; durationSeconds: number; style: string; resolution: string; fps: number; status: string; progress: number; message: string; storyboard: VideoStoryboard; outputPath: string | null; downloadReady: boolean; error: string | null; createdAt: number; }
 
 type Tab = 'studio' | 'chat' | 'video' | 'models';
 
@@ -536,7 +538,7 @@ export default function App() {
                     {job.error && <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#fca5a5' }}>⚠️ {job.error}</p>}
                     {job.storyboard && Object.keys(job.storyboard).length > 0 && (
                       <details style={{ marginTop: '10px' }}>
-                        <summary style={{ fontSize: '12px', opacity: 0.6, cursor: 'pointer' }}>View storyboard ({(job.storyboard.scenes as unknown[])?.length ?? 0} scenes)</summary>
+                        <summary style={{ fontSize: '12px', opacity: 0.6, cursor: 'pointer' }}>View storyboard ({job.storyboard.scenes?.length ?? 0} scenes)</summary>
                         <pre style={{ fontSize: '11px', opacity: 0.7, marginTop: '8px', overflow: 'auto', maxHeight: '200px', background: '#06101e', padding: '10px', borderRadius: '8px' }}>{JSON.stringify(job.storyboard, null, 2)}</pre>
                       </details>
                     )}
