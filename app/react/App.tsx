@@ -29,8 +29,13 @@ interface VideoStoryboard { title?: string; logline?: string; style?: string; to
 interface VideoJob { jobId: string; concept: string; durationSeconds: number; style: string; resolution: string; fps: number; status: string; progress: number; message: string; storyboard: VideoStoryboard; outputPath: string | null; downloadReady: boolean; error: string | null; createdAt: number; }
 
 type Tab = 'studio' | 'chat' | 'video' | 'music' | 'image' | 'code' | 'models';
+interface UserKeyEntry { provider: string; name: string; description: string; cost: string; get_key_url: string; recommended: boolean; configured: boolean; key_preview?: string; added_at?: string; }
+interface UserKeysResponse { providers: UserKeyEntry[]; configured_count: number; }
 
-const API = 'http://localhost:8000';
+// Use same-origin when deployed to Railway/Cloudflare; keep localhost:8000 in local dev.
+const API = (window.location.port === '5173' || window.location.port === '3000')
+  ? 'http://localhost:8000'
+  : '';
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
@@ -366,6 +371,14 @@ export default function App() {
   const [codeResult, setCodeResult] = useState('');
   const [generatingCode, setGeneratingCode] = useState(false);
 
+  // User API key management
+  const [userKeys, setUserKeys] = useState<UserKeysResponse | null>(null);
+  const [addKeyProvider, setAddKeyProvider] = useState('openrouter');
+  const [addKeyValue, setAddKeyValue] = useState('');
+  const [addKeyLabel, setAddKeyLabel] = useState('');
+  const [addKeyLoading, setAddKeyLoading] = useState(false);
+  const [addKeyMsg, setAddKeyMsg] = useState('');
+
   // ── Initial data load ──────────────────────────────────────────────────────
   useEffect(() => {
     const ctrl = new AbortController();
@@ -376,13 +389,15 @@ export default function App() {
       fetchJson<ControlPlaneStatus>(`${API}/api/studio/control-plane`, ctrl.signal),
       fetchJson<{ available: boolean; host: string; localModels: Array<{name:string}>; catalogue: OllamaModel[]; superGemmaReady: boolean; installHint: string }>(`${API}/api/ollama/status`, ctrl.signal),
       fetchJson<{ cascade: ModelCascadeEntry[] }>(`${API}/api/lumi/models`, ctrl.signal),
-    ]).then(([bk, meta, mb, cp, ol, models]) => {
+      fetchJson<UserKeysResponse>(`${API}/api/lumi/user-keys`, ctrl.signal),
+    ]).then(([bk, meta, mb, cp, ol, models, keys]) => {
       if (bk.status === 'fulfilled') setBackendStatus(bk.value);
       if (meta.status === 'fulfilled') setMetaStatus(meta.value);
       if (mb.status === 'fulfilled') setMetaBuilderStatus(mb.value);
       if (cp.status === 'fulfilled') setControlPlane(cp.value);
       if (ol.status === 'fulfilled') setOllamaStatus(ol.value);
       if (models.status === 'fulfilled') setOpenRouterCascade(models.value.cascade ?? []);
+      if (keys.status === 'fulfilled') setUserKeys(keys.value);
     });
     return () => ctrl.abort();
   }, []);
@@ -517,6 +532,33 @@ export default function App() {
       setCodeResult(data.content);
     } catch { setCodeResult('⚠️ Code generation failed. Is the backend running with OPENROUTER_API_KEY set?'); }
     finally { setGeneratingCode(false); }
+  };
+
+  const saveUserKey = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!addKeyValue.trim()) return;
+    setAddKeyLoading(true);
+    setAddKeyMsg('');
+    try {
+      const data = await postJson<{ ok: boolean; message: string }>(`${API}/api/lumi/user-key`, {
+        provider: addKeyProvider,
+        api_key: addKeyValue.trim(),
+        label: addKeyLabel.trim(),
+      });
+      setAddKeyMsg(data.message);
+      setAddKeyValue('');
+      const fresh = await fetchJson<UserKeysResponse>(`${API}/api/lumi/user-keys`);
+      setUserKeys(fresh);
+    } catch { setAddKeyMsg('⚠️ Failed to save key. Is the backend running?'); }
+    finally { setAddKeyLoading(false); }
+  };
+
+  const removeUserKey = async (provider: string) => {
+    try {
+      await fetch(`${API}/api/lumi/user-key/${provider}`, { method: 'DELETE' });
+      const fresh = await fetchJson<UserKeysResponse>(`${API}/api/lumi/user-keys`);
+      setUserKeys(fresh);
+    } catch { /* ignore */ }
   };
 
   // ── Derived state ──────────────────────────────────────────────────────────
@@ -681,7 +723,9 @@ export default function App() {
                 </select>
               </div>
               {!useOllama && (
-                <p style={hint}>Using OpenRouter free cascade: Gemini → DeepSeek → Llama → Mistral → Claude → GPT.<br/>Set <code>OPENROUTER_API_KEY</code> in backend to enable.</p>
+                <p style={hint}>Using OpenRouter free cascade: Gemini → DeepSeek → Llama → Mistral → Claude → GPT.<br/>
+                  Set <code>OPENROUTER_API_KEY</code> in Railway env vars, or add your key in the <strong>🤖 AI Models</strong> tab. <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" aria-label="Get a free OpenRouter API key" style={{ color: '#38bdf8' }}>Get a free key →</a>
+                </p>
               )}
             </div>
           </section>
@@ -856,7 +900,7 @@ export default function App() {
 
             {!isOllamaUp && (
               <div style={{ ...card, background: 'rgba(250,204,21,0.07)', border: '1px solid rgba(250,204,21,0.2)', padding: '14px 16px' }}>
-                <p style={{ margin: 0, fontSize: '13px' }}>
+                <p style={{ margin: '0 0 10px', fontSize: '13px' }}>
                   <strong style={{ color: '#fde68a' }}>Start Ollama:</strong><br/>
                   <code style={{ opacity: 0.8 }}>ollama serve</code><br/><br/>
                   <strong style={{ color: '#fde68a' }}>Pull SuperGemma 26B:</strong><br/>
@@ -864,6 +908,14 @@ export default function App() {
                   <strong style={{ color: '#fde68a' }}>Other recommended models:</strong><br/>
                   <code style={{ opacity: 0.8 }}>ollama pull llama3.1:8b  &amp;&amp;  ollama pull mistral:7b</code>
                 </p>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  <a href="https://ollama.com/download" target="_blank" rel="noreferrer" aria-label="Download Ollama installer" style={{ ...btn('secondary'), fontSize: '12px', padding: '7px 14px', textDecoration: 'none', display: 'inline-block' }}>
+                    ⬇ Download Ollama
+                  </a>
+                  <a href="https://github.com/Trezzhaused/trezzworld-production-studio#readme" target="_blank" rel="noreferrer" aria-label="View setup guide on GitHub" style={{ ...btn('secondary'), fontSize: '12px', padding: '7px 14px', textDecoration: 'none', display: 'inline-block' }}>
+                    📖 Setup Guide on GitHub
+                  </a>
+                </div>
               </div>
             )}
 
@@ -896,6 +948,63 @@ export default function App() {
                 </div>
               ))}
             </div>
+          </section>
+
+          {/* API Key management */}
+          <section style={card}>
+            <h2 style={h2style}>🔑 API Keys</h2>
+            <p style={hint}>Add your own provider API keys. LUMI uses them as a fallback when the system OpenRouter cascade is exhausted. Keys are stored in the backend database — never sent to the browser.</p>
+
+            {userKeys && userKeys.configured_count > 0 && (
+              <div style={{ marginBottom: '16px', display: 'grid', gap: '8px' }}>
+                {userKeys.providers.filter(p => p.configured).map(p => (
+                  <div key={p.provider} style={{ ...listItem, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <strong style={{ fontSize: '13px' }}>{p.name}</strong>
+                      <span style={{ marginLeft: '10px', fontSize: '11px', opacity: 0.55, fontFamily: 'monospace' }}>{p.key_preview}</span>
+                    </div>
+                    <button onClick={() => removeUserKey(p.provider)} style={{ ...btn('danger'), fontSize: '11px', padding: '4px 10px' }}>Remove</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <form onSubmit={saveUserKey} style={{ display: 'grid', gap: '12px' }}>
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div>
+                  <label style={label}>Provider</label>
+                  <select value={addKeyProvider} onChange={e => setAddKeyProvider(e.target.value)} style={select}>
+                    <option value="openrouter">OpenRouter (recommended)</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                    <option value="google">Google AI</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1, minWidth: '260px' }}>
+                  <label style={label}>API Key</label>
+                  <input
+                    type="password"
+                    value={addKeyValue}
+                    onChange={e => setAddKeyValue(e.target.value)}
+                    placeholder="sk-or-… / sk-… / AIza…"
+                    style={input}
+                  />
+                </div>
+                <div style={{ minWidth: '160px' }}>
+                  <label style={label}>Label (optional)</label>
+                  <input value={addKeyLabel} onChange={e => setAddKeyLabel(e.target.value)} placeholder="My key" style={input} />
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button type="submit" disabled={addKeyLoading || !addKeyValue.trim()} style={btn('primary', addKeyLoading || !addKeyValue.trim())}>
+                  {addKeyLoading ? 'Saving…' : '💾 Save Key'}
+                </button>
+                <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" aria-label="Get a free OpenRouter API key" style={{ fontSize: '12px', color: '#38bdf8' }}>
+                  Get a free OpenRouter key →
+                </a>
+              </div>
+              {addKeyMsg && <p style={{ margin: 0, fontSize: '13px', color: addKeyMsg.startsWith('⚠️') ? '#fca5a5' : '#86efac' }}>{addKeyMsg}</p>}
+            </form>
           </section>
 
           {/* LUMI prompt domains */}
