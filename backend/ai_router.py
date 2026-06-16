@@ -9,6 +9,9 @@ Three-role model (from jailbreak-autoresearch):
   executor  → generates code / content          (precise, low-temperature)
   scorer    → judges output against rubric       (deterministic, 0.0–1.0)
   lumi      → conversational LUMI interface      (balanced)
+
+Local Ollama models (SuperGemma 26B etc.) are tried first when available.
+Set OLLAMA_HOST env var to override the default http://localhost:11434.
 """
 from __future__ import annotations
 
@@ -283,26 +286,45 @@ class AIRouter:
         self,
         user_message: str,
         history: list[dict[str, str]] | None = None,
+        use_ollama: bool = False,
+        ollama_model: str | None = None,
+        domain: str | None = None,
     ) -> ChatResult:
         """
         LUMI conversational interface — the studio AI assistant.
         Maintains conversation history for multi-turn sessions.
+
+        Args:
+            user_message: The user's message.
+            history: Prior conversation turns.
+            use_ollama: Route to local Ollama instead of OpenRouter.
+            ollama_model: Specific Ollama model (e.g. 'gemma3:27b').
+            domain: Creative domain for prompt enhancement
+                    ('video'|'music'|'game'|'code'|'creative').
         """
-        system = (
-            "You are LUMI (Layered Universal Media Intelligence), "
-            "the autonomous AI brain of TrezzWorld Production Studio. "
-            "You plan builds, generate code, create media production pipelines, "
-            "and orchestrate full end-to-end creative and technical projects. "
-            "You are direct, technically precise, and creative. "
-            "You always describe what you are building or what you would build next. "
-            "You have access to the three-role AI pipeline: planner, executor, and scorer. "
-            "You draw from OpenRouter free models first (Gemini, DeepSeek, Llama, Mistral) "
-            "and escalate to Claude/GPT/Grok only when needed."
-        )
-        messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+        from .lumi_prompt_enhancer import enhance_prompt, detect_domain  # noqa: PLC0415
+
+        resolved_domain = domain or detect_domain(user_message)
+        enhanced = enhance_prompt(user_message, domain=resolved_domain)
+        system_content = enhanced[0]["content"]
+
+        messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
         if history:
-            messages.extend(history[-20:])  # keep last 20 turns
+            messages.extend(history[-20:])
         messages.append({"role": "user", "content": user_message})
+
+        # Route to local Ollama when requested
+        if use_ollama:
+            from .ollama_provider import get_ollama  # noqa: PLC0415
+            ollama = get_ollama()
+            if ollama_model:
+                result = ollama.chat(ollama_model, messages, temperature=0.72, max_tokens=1200)
+            else:
+                result = ollama.super_gemma_chat(messages, temperature=0.72, max_tokens=1200)
+            if result.ok:
+                return ChatResult(model=result.model, content=result.content, ok=True, usage=result.usage)
+            # Fall through to OpenRouter if Ollama fails
+
         return self.chat(messages, role="lumi", temperature=0.72, max_tokens=1200)
 
     def researcher_propose(self, goal: str, context: str = "", prior_fragments: str = "") -> ChatResult:

@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from .config import APP_NAME, VERSION
 from .meta_builder import build_meta_builder_status, continue_meta_builder
@@ -10,7 +11,7 @@ app = FastAPI(title=f"{APP_NAME} API", version=VERSION)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "*"],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
@@ -84,13 +85,17 @@ class LumiChatRequest(BaseModel):
     message: str
     missionId: str | None = None
     history: list[dict] | None = None
+    useOllama: bool = False
+    ollamaModel: str | None = None
+    domain: str | None = None
 
 
 @app.post("/api/lumi/chat")
 def lumi_chat(payload: LumiChatRequest):
     """
     Chat with LUMI. Stores conversation in MissionStore and returns AI response.
-    Cascades through free models first (Gemini → DeepSeek → Llama → …).
+    Supports OpenRouter cascade AND local Ollama (SuperGemma 26B / Gemma 27B).
+    Set useOllama=true to route through local Ollama.
     """
     from datetime import datetime, timezone  # noqa: PLC0415
     from .ai_router import get_router  # noqa: PLC0415
@@ -114,7 +119,13 @@ def lumi_chat(payload: LumiChatRequest):
         db_history = store.get_chat_history(payload.missionId, limit=20)
         history = [{"role": h["role"], "content": h["content"]} for h in db_history[:-1]]
 
-    result = router.lumi_chat(payload.message, history=history)
+    result = router.lumi_chat(
+        payload.message,
+        history=history,
+        use_ollama=payload.useOllama,
+        ollama_model=payload.ollamaModel,
+        domain=payload.domain,
+    )
 
     content = result.content if result.ok else f"LUMI is unavailable: {result.error}"
     model_used = result.model if result.ok else "none"
@@ -169,6 +180,130 @@ def lumi_finetune_assemble():
 
 @app.get("/api/lumi/models")
 def lumi_models():
-    """Return the configured AI model cascade."""
+    """Return the configured AI model cascade (OpenRouter + Ollama)."""
     from .ai_router import get_router  # noqa: PLC0415
-    return {"cascade": get_router().cascade_info()}
+    from .ollama_provider import get_ollama  # noqa: PLC0415
+    ollama = get_ollama()
+    return {
+        "cascade": get_router().cascade_info(),
+        "ollama": {
+            "available": ollama.is_available(),
+            "host": ollama.host,
+            "catalogue": ollama.catalogue(),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Ollama local model management
+# ---------------------------------------------------------------------------
+
+@app.get("/api/ollama/status")
+def ollama_status():
+    """Return Ollama availability and locally-pulled models."""
+    from .ollama_provider import get_ollama  # noqa: PLC0415
+    ollama = get_ollama()
+    available = ollama.is_available()
+    return {
+        "available": available,
+        "host": ollama.host,
+        "localModels": ollama.list_local_models() if available else [],
+        "catalogue": ollama.catalogue(),
+        "superGemmaReady": any(
+            m["available"] for m in ollama.catalogue()
+            if "gemma3:27b" in m["id"] or "gemma2:27b" in m["id"]
+        ) if available else False,
+        "installHint": (
+            "Start Ollama: `ollama serve`  "
+            "Pull SuperGemma 26B: `ollama pull gemma3:27b`"
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Prompt enhancer — domain-aware LUMI prompt improvement
+# ---------------------------------------------------------------------------
+
+class PromptEnhanceRequest(BaseModel):
+    prompt: str
+    domain: str | None = None
+
+
+@app.post("/api/lumi/enhance-prompt")
+def enhance_prompt_endpoint(payload: PromptEnhanceRequest):
+    """Enhance a raw user prompt using LUMI's domain-aware prompt engineering."""
+    from .lumi_prompt_enhancer import enhance_prompt, detect_domain, get_domain_catalogue  # noqa: PLC0415
+    domain = payload.domain or detect_domain(payload.prompt)
+    messages = enhance_prompt(payload.prompt, domain=domain)
+    return {
+        "domain": domain,
+        "detectedDomain": domain,
+        "enhancedMessages": messages,
+        "systemPromptPreview": messages[0]["content"][:300] + "…" if len(messages[0]["content"]) > 300 else messages[0]["content"],
+    }
+
+
+@app.get("/api/lumi/prompt-domains")
+def prompt_domains():
+    """Return the list of creative domains supported by the prompt enhancer."""
+    from .lumi_prompt_enhancer import get_domain_catalogue  # noqa: PLC0415
+    return {"domains": get_domain_catalogue()}
+
+
+# ---------------------------------------------------------------------------
+# Video Creator — AI-driven end-to-end video production with MP4 export
+# ---------------------------------------------------------------------------
+
+class VideoCreateRequest(BaseModel):
+    concept: str
+    durationSeconds: int = 60
+    style: str = "cinematic"
+    resolution: str = "1080p"
+    fps: int = 24
+
+
+@app.post("/api/video/create")
+def video_create(payload: VideoCreateRequest):
+    """
+    Start an AI-driven video creation job.
+    Returns a jobId to poll for status and download the MP4.
+    Duration capped at 600 seconds (10 minutes).
+    """
+    from .video_creator import create_video_job  # noqa: PLC0415
+    job = create_video_job(
+        concept=payload.concept,
+        duration_seconds=payload.durationSeconds,
+        style=payload.style,
+        resolution_label=payload.resolution,
+        fps=payload.fps,
+    )
+    return job.to_dict()
+
+
+@app.get("/api/video/{job_id}/status")
+def video_status(job_id: str):
+    """Poll the status of a video creation job."""
+    from .video_creator import get_video_job  # noqa: PLC0415
+    job = get_video_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Video job '{job_id}' not found.")
+    return job.to_dict()
+
+
+@app.get("/api/video/{job_id}/download")
+def video_download(job_id: str):
+    """Download the finished MP4 for a completed video job."""
+    from .video_creator import get_video_output_path  # noqa: PLC0415
+    path = get_video_output_path(job_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Video not ready or job not found.")
+    filename = path.name
+    media_type = "video/mp4" if filename.endswith(".mp4") else "text/plain"
+    return FileResponse(path=str(path), media_type=media_type, filename=filename)
+
+
+@app.get("/api/video/jobs")
+def video_jobs():
+    """List all video creation jobs."""
+    from .video_creator import list_video_jobs  # noqa: PLC0415
+    return {"jobs": list_video_jobs()}

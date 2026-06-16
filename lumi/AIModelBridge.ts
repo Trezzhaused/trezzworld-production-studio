@@ -6,11 +6,17 @@
  * (mirrors backend/ai_router.py role assignments) for client-side awareness.
  *
  * Endpoints bridged:
- *   POST /api/lumi/chat           — conversational LUMI interface
- *   GET  /api/pipeline/{id}/status — poll pipeline execution status
- *   POST /api/studio/control-plane/boot — boot a mission (now real execution)
- *   GET  /api/lumi/models          — model cascade info
- *   POST /api/lumi/finetune/assemble — trigger dataset assembly
+ *   POST /api/lumi/chat                  — conversational LUMI interface (OpenRouter + Ollama)
+ *   GET  /api/pipeline/{id}/status       — poll pipeline execution status
+ *   POST /api/studio/control-plane/boot  — boot a mission (now real execution)
+ *   GET  /api/lumi/models                — model cascade info (OpenRouter + Ollama catalogue)
+ *   POST /api/lumi/finetune/assemble     — trigger dataset assembly
+ *   GET  /api/ollama/status              — local Ollama health + model registry
+ *   POST /api/lumi/enhance-prompt        — domain-aware prompt enhancement
+ *   POST /api/video/create               — start a video generation job
+ *   GET  /api/video/{id}/status          — poll video job
+ *   GET  /api/video/{id}/download        — download completed MP4
+ *   GET  /api/video/jobs                 — list all video jobs
  */
 
 const API_BASE = 'http://localhost:8000';
@@ -62,10 +68,44 @@ export interface MissionStatus {
   };
 }
 
-export interface ModelCascadeEntry {
+export interface OllamaModelEntry {
   id: string;
-  tier: 'free' | 'low-cost' | 'premium';
-  priority: number;
+  family: string;
+  label: string;
+  available: boolean;
+}
+
+export interface OllamaStatus {
+  available: boolean;
+  host: string;
+  localModels: Array<{ name: string }>;
+  catalogue: OllamaModelEntry[];
+  superGemmaReady: boolean;
+  installHint: string;
+}
+
+export interface VideoJob {
+  jobId: string;
+  concept: string;
+  durationSeconds: number;
+  style: string;
+  resolution: string;
+  fps: number;
+  status: 'queued' | 'generating_storyboard' | 'rendering' | 'encoding' | 'done' | 'error';
+  progress: number;
+  message: string;
+  storyboard: Record<string, unknown>;
+  outputPath: string | null;
+  downloadReady: boolean;
+  error: string | null;
+  createdAt: number;
+}
+
+export interface PromptEnhanceResult {
+  domain: string;
+  detectedDomain: string;
+  enhancedMessages: Array<{ role: string; content: string }>;
+  systemPromptPreview: string;
 }
 
 export interface MissionBootResult {
@@ -104,11 +144,17 @@ export class AIModelBridge {
     message: string,
     history: ChatMessage[] = [],
     missionId?: string,
+    useOllama = false,
+    ollamaModel?: string,
+    domain?: string,
   ): Promise<LumiChatResponse> {
     const response = await this._post('/api/lumi/chat', {
       message,
       history,
       missionId: missionId ?? null,
+      useOllama,
+      ollamaModel: ollamaModel ?? null,
+      domain: domain ?? null,
     });
     return response as LumiChatResponse;
   }
@@ -141,12 +187,84 @@ export class AIModelBridge {
   }
 
   // ------------------------------------------------------------------
-  // Model cascade info
+  // Model cascade info (OpenRouter + Ollama)
   // ------------------------------------------------------------------
 
   async getCascadeInfo(): Promise<ModelCascadeEntry[]> {
     const data = await this._get('/api/lumi/models');
     return ((data as { cascade: ModelCascadeEntry[] }).cascade) ?? [];
+  }
+
+  async getOllamaStatus(): Promise<OllamaStatus> {
+    const data = await this._get('/api/ollama/status');
+    return data as OllamaStatus;
+  }
+
+  // ------------------------------------------------------------------
+  // Prompt enhancement
+  // ------------------------------------------------------------------
+
+  async enhancePrompt(prompt: string, domain?: string): Promise<PromptEnhanceResult> {
+    const data = await this._post('/api/lumi/enhance-prompt', { prompt, domain: domain ?? null });
+    return data as PromptEnhanceResult;
+  }
+
+  // ------------------------------------------------------------------
+  // Video Creator — end-to-end AI video production
+  // ------------------------------------------------------------------
+
+  async createVideo(
+    concept: string,
+    durationSeconds = 60,
+    style = 'cinematic',
+    resolution = '1080p',
+    fps = 24,
+  ): Promise<VideoJob> {
+    const data = await this._post('/api/video/create', {
+      concept, durationSeconds, style, resolution, fps,
+    });
+    return data as VideoJob;
+  }
+
+  async getVideoStatus(jobId: string): Promise<VideoJob> {
+    const data = await this._get(`/api/video/${encodeURIComponent(jobId)}/status`);
+    return data as VideoJob;
+  }
+
+  async listVideoJobs(): Promise<VideoJob[]> {
+    const data = await this._get('/api/video/jobs');
+    return ((data as { jobs: VideoJob[] }).jobs) ?? [];
+  }
+
+  getVideoDownloadUrl(jobId: string): string {
+    return `${this.baseUrl}/api/video/${encodeURIComponent(jobId)}/download`;
+  }
+
+  async pollVideoUntilComplete(
+    jobId: string,
+    onUpdate: (job: VideoJob) => void,
+    intervalMs = 3000,
+    timeoutMs = 1_200_000,
+  ): Promise<VideoJob> {
+    const start = Date.now();
+    return new Promise((resolve, reject) => {
+      const timer = setInterval(async () => {
+        try {
+          const job = await this.getVideoStatus(jobId);
+          onUpdate(job);
+          if (job.status === 'done' || job.status === 'error') {
+            clearInterval(timer);
+            resolve(job);
+          } else if (Date.now() - start > timeoutMs) {
+            clearInterval(timer);
+            reject(new Error(`Video job ${jobId} timed out`));
+          }
+        } catch (err) {
+          clearInterval(timer);
+          reject(err);
+        }
+      }, intervalMs);
+    });
   }
 
   // ------------------------------------------------------------------
