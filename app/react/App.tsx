@@ -381,16 +381,17 @@ export default function App() {
 
   // ── Initial data load ──────────────────────────────────────────────────────
   useEffect(() => {
-    const ctrl = new AbortController();
+    let mounted = true;
     Promise.allSettled([
-      fetchJson<BackendStatus>(`${API}/api/status`, ctrl.signal),
-      fetchJson<MetaDevelopmentStatus>(`${API}/api/meta-development/status`, ctrl.signal),
-      fetchJson<MetaBuilderStatus>(`${API}/api/meta-builder/status`, ctrl.signal),
-      fetchJson<ControlPlaneStatus>(`${API}/api/studio/control-plane`, ctrl.signal),
-      fetchJson<{ available: boolean; host: string; localModels: Array<{name:string}>; catalogue: OllamaModel[]; superGemmaReady: boolean; installHint: string }>(`${API}/api/ollama/status`, ctrl.signal),
-      fetchJson<{ cascade: ModelCascadeEntry[] }>(`${API}/api/lumi/models`, ctrl.signal),
-      fetchJson<UserKeysResponse>(`${API}/api/lumi/user-keys`, ctrl.signal),
+      fetchJson<BackendStatus>(`${API}/api/status`),
+      fetchJson<MetaDevelopmentStatus>(`${API}/api/meta-development/status`),
+      fetchJson<MetaBuilderStatus>(`${API}/api/meta-builder/status`),
+      fetchJson<ControlPlaneStatus>(`${API}/api/studio/control-plane`),
+      fetchJson<{ available: boolean; host: string; localModels: Array<{name:string}>; catalogue: OllamaModel[]; superGemmaReady: boolean; installHint: string }>(`${API}/api/ollama/status`),
+      fetchJson<{ cascade: ModelCascadeEntry[] }>(`${API}/api/lumi/models`),
+      fetchJson<UserKeysResponse>(`${API}/api/lumi/user-keys`),
     ]).then(([bk, meta, mb, cp, ol, models, keys]) => {
+      if (!mounted) return;
       if (bk.status === 'fulfilled') setBackendStatus(bk.value);
       if (meta.status === 'fulfilled') setMetaStatus(meta.value);
       if (mb.status === 'fulfilled') setMetaBuilderStatus(mb.value);
@@ -399,7 +400,7 @@ export default function App() {
       if (models.status === 'fulfilled') setOpenRouterCascade(models.value.cascade ?? []);
       if (keys.status === 'fulfilled') setUserKeys(keys.value);
     });
-    return () => ctrl.abort();
+    return () => { mounted = false; };
   }, []);
 
   // ── Pipeline polling ───────────────────────────────────────────────────────
