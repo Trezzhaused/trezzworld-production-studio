@@ -41,16 +41,14 @@ jobs:
             echo "::error::Name: RAILWAY_SERVICE (service name) or RAILWAY_SERVICE_ID (service id)"
             exit 1
           fi
+          echo "TARGET_SERVICE=$TARGET_SERVICE" >> "$GITHUB_ENV"
 
       # ── 4. Deploy to Railway (builds Dockerfile automatically) ────────────
       - name: Deploy via Railway
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE }}
-          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
         run: |
-          TARGET_SERVICE="${RAILWAY_SERVICE_ID:-$RAILWAY_SERVICE}"
           if [ -n "$RAILWAY_PROJECT_ID" ]; then
             railway up --project "$RAILWAY_PROJECT_ID" --service "$TARGET_SERVICE" --detach
           else
