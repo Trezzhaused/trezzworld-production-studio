@@ -37,4 +37,5 @@ jobs:
       - name: Deploy via Railway
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: railway up --service trezzworld-studio --detach
