@@ -21,15 +21,22 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      # ── 3. Validate Railway token before attempting deployment ─────────────
-      - name: Validate Railway token
+      # ── 3. Validate Railway secrets before attempting deployment ──────────
+      - name: Validate Railway secrets
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE }}
         run: |
           if [ -z "$RAILWAY_TOKEN" ]; then
             echo "::error::RAILWAY_TOKEN secret is not configured."
             echo "::error::Add it at: Settings → Secrets and variables → Actions → New repository secret"
-            echo "::error::Name: RAILWAY_TOKEN Value: your Railway project token (railway.com → Project → Settings → Tokens)"
+            echo "::error::Name: RAILWAY_TOKEN  Value: your Railway project token (railway.com → Project → Settings → Tokens)"
+            exit 1
+          fi
+          if [ -z "$RAILWAY_SERVICE" ]; then
+            echo "::error::RAILWAY_SERVICE secret is not configured."
+            echo "::error::Add it at: Settings → Secrets and variables → Actions → New repository secret"
+            echo "::error::Name: RAILWAY_SERVICE  Value: the Railway service name to deploy (railway.com → Project → <service name>)"
             exit 1
           fi
 
@@ -37,4 +44,5 @@ jobs:
       - name: Deploy via Railway
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway up --detach
+          RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE }}
+        run: railway up --service "$RAILWAY_SERVICE" --detach
