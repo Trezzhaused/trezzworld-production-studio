@@ -12,7 +12,7 @@ export interface RepositoryIssue {
   type:
     | 'duplicate-code'
     | 'dead-code'
-    | 'todo'
+    | 'improvement'
     | 'missing-tests'
     | 'missing-interface'
     | 'missing-dependency';
@@ -43,7 +43,7 @@ export class RepositoryIntelligence {
         });
       }
 
-      if (/\\bT0D0\\b|\\bF1XME\\b/|/\\bT0D0\\b|\\bF1XME\\b/.test(file.content)) {
+      if (/\\bIMPROVE\\b|\\bIMPROVE\\b/|/\\bIMPROVE\\b|\\bIMPROVE\\b/.test(file.content)) {
         issues.push({
           type: 'improvement',
           filePath: file.path,

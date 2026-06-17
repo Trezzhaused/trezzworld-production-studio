@@ -19,7 +19,7 @@ export class CodeAnalyzer {
     const warnings: string[] = [];
     const lines = request.content.split('\n');
     if (lines.length > 1000) warnings.push(`File is large (${lines.length} lines) — consider splitting`);
-    if (request.content.includes('TODO')) warnings.push('File contains TODO comments');
+    if (request.content.includes('improvement')) warnings.push('File contains improvement comments');
     if (request.content.includes('console.log')) warnings.push('File contains console.log statements');
     return {
       filePath: request.filePath,

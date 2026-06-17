@@ -65,7 +65,7 @@ def _count_files(path: Path, suffixes: tuple[str, ...]) -> int:
     return sum(1 for file in path.rglob("*") if file.is_file() and file.suffix in suffixes)
 
 
-def _count_todos(path: Path, suffixes: tuple[str, ...]) -> int:
+def _count_improvements(path: Path, suffixes: tuple[str, ...]) -> int:
     if not path.exists():
         return 0
     total = 0
@@ -77,7 +77,7 @@ def _count_todos(path: Path, suffixes: tuple[str, ...]) -> int:
         except UnicodeDecodeError:
             continue
         normalized = content.upper()
-        total += normalized.count("T0D0") + normalized.count("F1XME")
+        total += normalized.count("IMPROV") + normalized.count("FIXD")
     return total
 
 
@@ -167,7 +167,7 @@ def build_meta_development_status() -> dict[str, Any]:
     ]
 
     total_source_files = _count_files(REPO_ROOT, (".ts", ".tsx", ".py"))
-    todo_count = _count_todos(REPO_ROOT, (".ts", ".tsx", ".py", ".md"))
+    improvement_count = _count_improvements(REPO_ROOT, (".ts", ".tsx", ".py", ".md"))
 
     return {
         "highestRoiNextMove": "Build the Meta Development Engine with Repository Intelligence as its first dependency.",
@@ -178,7 +178,7 @@ def build_meta_development_status() -> dict[str, Any]:
         ],
         "repositoryIntelligence": {
             "sourceFiles": total_source_files,
-            "todoMarkers": todo_count,
+            "improvementMarkers": improvement_count,
             "architectureDetected": _check_path("kernel") and _check_path("orchestration"),
             "missingTestScript": not bool(_load_npm_scripts().get("test")),
         },

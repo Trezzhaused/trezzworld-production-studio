@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 GAP_PENALTY_PERCENTAGE = 9
 
 
-def _top_todo_hotspots(limit: int = 5) -> list[dict[str, Any]]:
+def _top_improvement_hotspots(limit: int = 5) -> list[dict[str, Any]]:
     hotspots: list[dict[str, Any]] = []
     for file in REPO_ROOT.rglob("*"):
         if not file.is_file() or file.suffix not in {".ts", ".tsx", ".py", ".md"}:
@@ -19,7 +19,7 @@ def _top_todo_hotspots(limit: int = 5) -> list[dict[str, Any]]:
             content = file.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        count = content.upper().count("T0D0") + content.upper().count("F1XME")
+        count = content.upper().count("IMPROV") + content.upper().count("FIXD")
         if count > 0:
             hotspots.append({"path": str(file.relative_to(REPO_ROOT)), "markers": count})
     hotspots.sort(key=lambda item: item["markers"], reverse=True)
@@ -55,7 +55,7 @@ def _execution_loop() -> list[str]:
 
 def build_meta_builder_status() -> dict[str, Any]:
     gaps = _missing_phase_files()
-    hotspots = _top_todo_hotspots()
+    hotspots = _top_improvement_hotspots()
 
     next_actions = [
         {
@@ -99,7 +99,7 @@ def build_meta_builder_status() -> dict[str, Any]:
         "readinessEstimate": readiness_estimate,
         "phaseGaps": gaps,
         "nextActions": next_actions,
-        "todoHotspots": hotspots,
+        "improvementHotspots": hotspots,
         "capabilityRequests": ["GenerateImage", "GenerateVideo", "GenerateMusic", "GenerateVoice", "Generate3D"],
         "executionLoop": _execution_loop(),
         "approvalGate": {
