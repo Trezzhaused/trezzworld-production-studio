@@ -30,6 +30,10 @@ COPY capability/ capability/
 COPY testing/ testing/
 COPY autonomous/ autonomous/
 COPY lumi/ lumi/
+COPY security/ security/
+COPY quality/ quality/
+COPY deployment/ deployment/
+COPY README.md README.md
 
 # Copy built React UI from stage 1
 COPY --from=ui-builder /build/dist/renderer dist/renderer/
