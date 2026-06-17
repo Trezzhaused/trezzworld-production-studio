@@ -1,44 +1,33 @@
-export type TestStatus = 'pending' | 'pass' | 'fail' | 'skip';
-
-export interface TestCase {
-  id: string;
-  name: string;
-  run: () => void | Promise<void>;
-}
-
 export interface TestResult {
-  testId: string;
   name: string;
-  status: TestStatus;
-  durationMs: number;
+  passed: boolean;
   error?: string;
+  duration: number;
 }
 
 export class TestRunner {
-  private readonly tests: TestCase[] = [];
+  private tests: Array<{ name: string; fn: () => Promise<boolean> }> = [];
 
-  register(test: TestCase): void {
-    this.tests.push(test);
+  register(name: string, fn: () => Promise<boolean>): void {
+    this.tests.push({ name, fn });
   }
 
-  async run(filter?: string): Promise<TestResult[]> {
-    const suite = filter
-      ? this.tests.filter(t => t.name.toLowerCase().includes(filter.toLowerCase()))
-      : this.tests;
+  async runAll(): Promise<TestResult[]> {
     const results: TestResult[] = [];
-    for (const test of suite) {
+    for (const test of this.tests) {
       const start = Date.now();
       try {
-        await test.run();
-        results.push({ testId: test.id, name: test.name, status: 'pass', durationMs: Date.now() - start });
-      } catch (err) {
-        results.push({ testId: test.id, name: test.name, status: 'fail', durationMs: Date.now() - start, error: String(err) });
+        const passed = await test.fn();
+        results.push({ name: test.name, passed, duration: Date.now() - start });
+      } catch (e: unknown) {
+        results.push({ name: test.name, passed: false, error: String(e), duration: Date.now() - start });
       }
     }
     return results;
   }
 
-  list(): TestCase[] {
-    return [...this.tests];
+  summary(results: TestResult[]): string {
+    const passed = results.filter(r => r.passed).length;
+    return `${passed}/${results.length} tests passed`;
   }
 }

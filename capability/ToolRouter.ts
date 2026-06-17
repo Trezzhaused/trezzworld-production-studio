@@ -1,20 +1,14 @@
-import { ProviderSelector } from './ProviderSelector';
-
-export interface RoutingDecision {
-  capability: string;
-  providerId?: string;
-  route: 'direct' | 'fallback';
-}
+import { ProviderRegistry } from "./ProviderRegistry";
 
 export class ToolRouter {
-  constructor(private readonly selector: ProviderSelector) {}
+  private registry = new ProviderRegistry();
 
-  route(capability: string): RoutingDecision {
-    const provider = this.selector.select(capability);
-    if (provider) {
-      return { capability, providerId: provider.id, route: 'direct' };
-    }
-
-    return { capability, route: 'fallback' };
+  async route(capability: string, payload: Record<string, unknown>): Promise<unknown> {
+    const provider = this.registry.getProvider(capability);
+    if (!provider) throw new Error(`No provider for capability: ${capability}`);
+    console.log(`[ToolRouter] Routing ${capability} to ${provider.name}`);
+    return provider.execute(payload);
   }
+
+  listCapabilities(): string[] { return this.registry.listCapabilities(); }
 }

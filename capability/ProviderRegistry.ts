@@ -1,25 +1,23 @@
-export type ProviderKind = 'local' | 'cloud' | 'commercial' | 'open-source' | 'future';
-
 export interface Provider {
-  id: string;
-  kind: ProviderKind;
-  capabilities: string[];
-  healthy: boolean;
-  costRank: number;
+  name: string;
+  capability: string;
+  status: "ready" | "standby" | "needs-provider";
+  execute(payload: Record<string, unknown>): Promise<unknown>;
 }
 
 export class ProviderRegistry {
-  private readonly providers = new Map<string, Provider>();
+  private providers: Map<string, Provider> = new Map();
 
   register(provider: Provider): void {
-    this.providers.set(provider.id, provider);
+    this.providers.set(provider.capability, provider);
+    console.log(`[ProviderRegistry] Registered: ${provider.name} for ${provider.capability}`);
   }
 
-  list(): Provider[] {
-    return Array.from(this.providers.values());
+  getProvider(capability: string): Provider | undefined {
+    return this.providers.get(capability);
   }
 
-  findByCapability(capability: string): Provider[] {
-    return this.list().filter((provider) => provider.healthy && provider.capabilities.includes(capability));
-  }
+  listCapabilities(): string[] { return Array.from(this.providers.keys()); }
+
+  getAll(): Provider[] { return Array.from(this.providers.values()); }
 }
