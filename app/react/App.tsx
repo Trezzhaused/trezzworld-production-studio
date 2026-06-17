@@ -144,6 +144,18 @@ export default function App() {
   const [videoStyle, setVideoStyle] = useState('cinematic');
   const [videoResolution, setVideoResolution] = useState('1080p');
   const [videoFps, setVideoFps] = useState(24);
+  const [creations, setCreations] = React.useState<any[]>([]);
+  const [creationsLoading, setCreationsLoading] = React.useState(false);
+  const [missionResult, setMissionResult] = React.useState<any>(null);
+  const [missionLoading, setMissionLoading] = React.useState(false);
+  const [missionPrompt, setMissionPrompt] = React.useState('');
+  const [activeCreation, setActiveCreation] = React.useState<any>(null);
+  const [creations, setCreations] = React.useState<any[]>([]);
+  const [creationsLoading, setCreationsLoading] = React.useState(false);
+  const [missionResult, setMissionResult] = React.useState<any>(null);
+  const [missionLoading, setMissionLoading] = React.useState(false);
+  const [missionPrompt, setMissionPrompt] = React.useState('');
+  const [activeCreation, setActiveCreation] = React.useState<any>(null);
   const [videoJobs, setVideoJobs] = useState<VideoJob[]>([]);
   const [creatingVideo, setCreatingVideo] = useState(false);
   const videoPolls = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
@@ -1033,3 +1045,9 @@ export default function App() {
     </div>
   );
 }
+
+
+
+
+
+
