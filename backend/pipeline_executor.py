@@ -352,7 +352,7 @@ class PipelineExecutor:
         rubric = (
             f"The output is for task: {task['title']}. "
             f"It should be: complete, syntactically correct, immediately executable or parseable, "
-            f"and implement the stated goal with no placeholders or TODOs."
+            f"and implement the stated goal with no placeholders or incomplete sections."
         )
         score = self._router.score(output, rubric) if output else 0.0
 
