@@ -80,7 +80,7 @@ def build_meta_builder_status() -> dict[str, Any]:
                 "objective": "Reduce ambiguity and improve autonomous execution confidence.",
                 "targetFiles": [item["path"] for item in hotspots[:3]],
                 "acceptanceCriteria": [
-                    "Highest improvement/FIXME markers are converted into explicit tasks.",
+                    "Highest improvement markers are converted into explicit tasks.",
                     "Roadmap reflects converted tasks and owners.",
                 ],
             }
