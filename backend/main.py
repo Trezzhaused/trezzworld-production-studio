@@ -400,34 +400,44 @@ class MusicGenerateRequest(BaseModel):
 
 @app.post("/api/music/generate")
 def music_generate(payload: MusicGenerateRequest):
-    """Generate a detailed music composition brief using LUMI."""
-    from .ai_router import get_router  # noqa: PLC0415
-    router = get_router()
-    prompt = (
-        f"Compose a detailed music production brief for: {payload.concept}\n"
-        f"Genre: {payload.genre}, BPM: {payload.bpm}, Mood: {payload.mood}, "
-        f"Duration: {payload.durationSeconds}s\n\n"
-        "Provide:\n"
-        "1. Track title\n"
-        "2. Full arrangement (intro/verse/chorus/bridge/outro with timestamps)\n"
-        "3. Instrument list with specific articulations\n"
-        "4. Sound design notes\n"
-        "5. Mixing/mastering targets (LUFS, dynamics)\n"
-        "6. Lyrics or vocal notes if applicable\n"
-        "7. Reference tracks\n"
-        "Format as a professional studio session document."
+    """Start a music creation job and return the job metadata."""
+    from .music_creator import create_music_job  # noqa: PLC0415
+    job = create_music_job(
+        concept=payload.concept,
+        genre=payload.genre,
+        bpm=payload.bpm,
+        mood=payload.mood,
+        duration_seconds=payload.durationSeconds,
     )
-    result = router.lumi_chat(prompt, domain="music")
-    return {
-        "concept": payload.concept,
-        "genre": payload.genre,
-        "bpm": payload.bpm,
-        "mood": payload.mood,
-        "durationSeconds": payload.durationSeconds,
-        "composition": result.content if result.ok else f"LUMI unavailable: {result.error}",
-        "model": result.model,
-        "ok": result.ok,
-    }
+    return job.to_dict()
+
+
+@app.get("/api/music/{job_id}/status")
+def music_status(job_id: str):
+    """Poll the status of a music creation job."""
+    from .music_creator import get_music_job  # noqa: PLC0415
+    job = get_music_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Music job '{job_id}' not found.")
+    return job.to_dict()
+
+
+@app.get("/api/music/{job_id}/download")
+def music_download(job_id: str):
+    """Download the finished WAV for a completed music job."""
+    from .music_creator import get_music_output_path  # noqa: PLC0415
+    path = get_music_output_path(job_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Music not ready or job not found.")
+    filename = path.name
+    return FileResponse(path=str(path), media_type="audio/wav", filename=filename)
+
+
+@app.get("/api/music/jobs")
+def music_jobs():
+    """List all music creation jobs."""
+    from .music_creator import list_music_jobs  # noqa: PLC0415
+    return {"jobs": list_music_jobs()}
 
 
 # ---------------------------------------------------------------------------

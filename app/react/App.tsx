@@ -27,8 +27,9 @@ interface ModelCascadeEntry { id: string; tier: string; priority: number; }
 interface VideoStoryboardScene { id: string; title: string; duration_seconds: number; visual_description: string; text_overlay?: string; transition_in: string; transition_out: string; camera_motion: string; color_grade: string; }
 interface VideoStoryboard { title?: string; logline?: string; style?: string; total_duration_seconds?: number; color_palette?: string[]; audio?: Record<string, unknown>; scenes?: VideoStoryboardScene[]; }
 interface VideoJob { jobId: string; concept: string; durationSeconds: number; style: string; resolution: string; fps: number; status: string; progress: number; message: string; storyboard: VideoStoryboard; outputPath: string | null; downloadReady: boolean; error: string | null; createdAt: number; }
+interface MusicJob { jobId: string; concept: string; genre: string; bpm: number; mood: string; durationSeconds: number; status: string; progress: number; message: string; composition: string; outputPath: string | null; downloadReady: boolean; error: string | null; createdAt: number; }
 
-type Tab = 'studio' | 'chat' | 'video' | 'music' | 'image' | 'code' | 'models';
+type Tab = 'studio' | 'chat' | 'video' | 'music' | 'image' | 'editor' | 'code' | 'models';
 interface UserKeyEntry { provider: string; name: string; description: string; cost: string; get_key_url: string; recommended: boolean; configured: boolean; key_preview?: string; added_at?: string; }
 interface UserKeysResponse { providers: UserKeyEntry[]; configured_count: number; }
 
@@ -69,7 +70,7 @@ const select: React.CSSProperties = { ...input, width: 'auto', minWidth: '140px'
 const label: React.CSSProperties = { fontSize: '12px', fontWeight: 600, opacity: 0.7, marginBottom: '4px', display: 'block' };
 const hint: React.CSSProperties = { fontSize: '12px', opacity: 0.55, margin: '4px 0 0' };
 const h2style: React.CSSProperties = { marginTop: 0, marginBottom: '14px', fontSize: '16px', fontWeight: 700 };
-const progress = (pct: number, col = '#38bdf8'): React.CSSProperties => ({ height: '6px', background: 'rgba(255,255,255,0.07)', borderRadius: '999px', overflow: 'hidden', position: 'relative' });
+const progress = (): React.CSSProperties => ({ height: '6px', background: 'rgba(255,255,255,0.07)', borderRadius: '999px', overflow: 'hidden', position: 'relative' });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -87,7 +88,7 @@ const postJson = async <T,>(url: string, body: unknown): Promise<T> => {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function TabButton({ id, label, active, onClick }: { id: string; label: string; active: boolean; onClick: () => void }) {
+function TabButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick} style={{ background: active ? 'rgba(56,189,248,0.18)' : 'transparent', color: active ? '#38bdf8' : '#94a3b8', border: active ? '1px solid rgba(56,189,248,0.3)' : '1px solid transparent', borderRadius: '8px', padding: '7px 16px', fontWeight: active ? 700 : 500, cursor: 'pointer', fontSize: '13px', transition: 'all 0.15s' }}>
       {label}
@@ -98,7 +99,7 @@ function TabButton({ id, label, active, onClick }: { id: string; label: string; 
 function ProgressBar({ pct, status }: { pct: number; status: string }) {
   const col = status === 'done' || status === 'completed' ? '#86efac' : status === 'error' || status === 'failed' ? '#fca5a5' : '#38bdf8';
   return (
-    <div style={progress(pct)}>
+    <div style={progress()}>
       <div style={{ height: '100%', width: `${pct}%`, background: col, borderRadius: '999px', transition: 'width 0.5s ease' }} />
     </div>
   );
@@ -144,18 +145,6 @@ export default function App() {
   const [videoStyle, setVideoStyle] = useState('cinematic');
   const [videoResolution, setVideoResolution] = useState('1080p');
   const [videoFps, setVideoFps] = useState(24);
-  const [creations, setCreations] = React.useState<any[]>([]);
-  const [creationsLoading, setCreationsLoading] = React.useState(false);
-  const [missionResult, setMissionResult] = React.useState<any>(null);
-  const [missionLoading, setMissionLoading] = React.useState(false);
-  const [missionPrompt, setMissionPrompt] = React.useState('');
-  const [activeCreation, setActiveCreation] = React.useState<any>(null);
-  const [creations, setCreations] = React.useState<any[]>([]);
-  const [creationsLoading, setCreationsLoading] = React.useState(false);
-  const [missionResult, setMissionResult] = React.useState<any>(null);
-  const [missionLoading, setMissionLoading] = React.useState(false);
-  const [missionPrompt, setMissionPrompt] = React.useState('');
-  const [activeCreation, setActiveCreation] = React.useState<any>(null);
   const [videoJobs, setVideoJobs] = useState<VideoJob[]>([]);
   const [creatingVideo, setCreatingVideo] = useState(false);
   const videoPolls = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
@@ -166,8 +155,13 @@ export default function App() {
   const [musicBpm, setMusicBpm] = useState(120);
   const [musicMood, setMusicMood] = useState('epic');
   const [musicDuration, setMusicDuration] = useState(60);
-  const [musicResult, setMusicResult] = useState('');
-  const [generatingMusic, setGeneratingMusic] = useState(false);
+  const [musicJobs, setMusicJobs] = useState<MusicJob[]>([]);
+  const [musicCreating, setMusicCreating] = useState(false);
+  const musicPolls = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+
+  // Editor
+  const [editorMode, setEditorMode] = useState<'doc' | 'board'>('doc');
+  const [editorContent, setEditorContent] = useState('');
 
   // Image
   const [imageConcept, setImageConcept] = useState('');
@@ -242,7 +236,19 @@ export default function App() {
     }, 3000);
     videoPolls.current.set(jobId, timer);
   }, []);
-  useEffect(() => () => { videoPolls.current.forEach(t => clearInterval(t)); }, []);
+  useEffect(() => () => { videoPolls.current.forEach(t => clearInterval(t)); musicPolls.current.forEach(t => clearInterval(t)); }, []);
+
+  const pollMusicJob = useCallback((jobId: string) => {
+    if (musicPolls.current.has(jobId)) return;
+    const timer = setInterval(async () => {
+      try {
+        const job = await fetchJson<MusicJob>(`${API}/api/music/${jobId}/status`);
+        setMusicJobs(prev => { const next = [...prev]; const idx = next.findIndex(j => j.jobId === jobId); if (idx >= 0) next[idx] = job; else next.unshift(job); return next; });
+        if (job.status === 'done' || job.status === 'error') { clearInterval(timer); musicPolls.current.delete(jobId); }
+      } catch { clearInterval(timer); musicPolls.current.delete(jobId); }
+    }, 3000);
+    musicPolls.current.set(jobId, timer);
+  }, []);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
@@ -307,15 +313,16 @@ export default function App() {
   const generateMusic = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!musicConcept.trim()) return;
-    setGeneratingMusic(true);
-    setMusicResult('');
+    setMusicCreating(true);
     try {
-      const data = await postJson<{ composition: string; model: string; ok: boolean }>(`${API}/api/music/generate`, {
+      const job = await postJson<MusicJob>(`${API}/api/music/generate`, {
         concept: musicConcept, genre: musicGenre, bpm: musicBpm, mood: musicMood, durationSeconds: musicDuration,
       });
-      setMusicResult(data.composition);
-    } catch { setMusicResult('⚠️ Music generation failed. Is the backend running with OPENROUTER_API_KEY set?'); }
-    finally { setGeneratingMusic(false); }
+      setMusicJobs(prev => [job, ...prev]);
+      pollMusicJob(job.jobId);
+    } catch {
+      alert('Failed to start music creation. Is the backend running?');
+    } finally { setMusicCreating(false); }
   };
 
   const generateImage = async (e: React.FormEvent) => {
@@ -393,13 +400,14 @@ export default function App() {
           <span style={{ fontSize: '13px', opacity: 0.7 }}>Production Studio</span>
         </div>
         <div style={tabBar}>
-          <TabButton id="studio" label="🎬 Studio" active={tab==='studio'} onClick={() => setTab('studio')} />
-          <TabButton id="chat" label="💬 LUMI" active={tab==='chat'} onClick={() => setTab('chat')} />
-          <TabButton id="video" label="🎥 Video" active={tab==='video'} onClick={() => setTab('video')} />
-          <TabButton id="music" label="🎵 Music" active={tab==='music'} onClick={() => setTab('music')} />
-          <TabButton id="image" label="🖼 Image" active={tab==='image'} onClick={() => setTab('image')} />
-          <TabButton id="code" label="💻 Code" active={tab==='code'} onClick={() => setTab('code')} />
-          <TabButton id="models" label="🤖 AI Models" active={tab==='models'} onClick={() => setTab('models')} />
+          <TabButton label="🎬 Studio" active={tab==='studio'} onClick={() => setTab('studio')} />
+          <TabButton label="💬 LUMI" active={tab==='chat'} onClick={() => setTab('chat')} />
+          <TabButton label="🎥 Video" active={tab==='video'} onClick={() => setTab('video')} />
+          <TabButton label="🎵 Music" active={tab==='music'} onClick={() => setTab('music')} />
+          <TabButton label="🖼 Image" active={tab==='image'} onClick={() => setTab('image')} />
+          <TabButton label="✍️ Editor" active={tab==='editor'} onClick={() => setTab('editor')} />
+          <TabButton label="💻 Code" active={tab==='code'} onClick={() => setTab('code')} />
+          <TabButton label="🤖 AI Models" active={tab==='models'} onClick={() => setTab('models')} />
         </div>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '13px' }}>
           <StatusDot ok={isBackendUp} /><span style={{ opacity: 0.7 }}>Backend</span>
@@ -602,6 +610,7 @@ export default function App() {
                     <option value="animated">Animated</option>
                     <option value="lo-fi aesthetic">Lo-fi Aesthetic</option>
                     <option value="epic fantasy">Epic Fantasy</option>
+                    <option value="photorealistic">Photorealistic</option>
                   </select>
                 </div>
                 <div>
@@ -626,9 +635,9 @@ export default function App() {
 
               <div style={{ ...card, background: 'rgba(56,189,248,0.06)', border: '1px solid rgba(56,189,248,0.15)', padding: '12px 16px' }}>
                 <p style={{ margin: 0, fontSize: '13px', opacity: 0.8 }}>
-                  📋 <strong>Pipeline:</strong> LUMI generates storyboard → Pillow renders frames → FFmpeg encodes MP4.<br/>
+                  📋 <strong>Pipeline:</strong> LUMI generates storyboard → photorealistic frames via image API when requested → FFmpeg encodes MP4.<br/>
                   🖥️ <strong>FFmpeg required</strong> for real MP4: <code>winget install FFmpeg</code> (Win) · <code>brew install ffmpeg</code> (Mac) · <code>apt install ffmpeg</code> (Linux)<br/>
-                  🤖 <strong>AI:</strong> SuperGemma 26B (Ollama) if available, otherwise OpenRouter cascade.
+                  🤖 <strong>AI:</strong> SuperGemma 26B (Ollama) if available, otherwise OpenRouter cascade. For photorealistic frames, set style to Photorealistic and provide an OpenAI/OpenRouter API key.
                 </p>
               </div>
 
@@ -897,21 +906,93 @@ export default function App() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', opacity: 0.5 }}><span>15s</span><span>5 min</span><span>10 min</span></div>
                 </div>
               </div>
-              <button type="submit" disabled={generatingMusic || !musicConcept.trim()} style={{ ...btn('primary', generatingMusic || !musicConcept.trim()), padding: '12px 28px', fontSize: '15px' }}>
-                {generatingMusic ? '🎵 Composing…' : '🎵 Compose with LUMI'}
+              <button type="submit" disabled={musicCreating || !musicConcept.trim()} style={{ ...btn('primary', musicCreating || !musicConcept.trim()), padding: '12px 28px', fontSize: '15px' }}>
+                {musicCreating ? '🎵 Composing…' : '🎵 Compose with LUMI'}
               </button>
             </form>
           </section>
 
-          {musicResult && (
+          {musicJobs.length > 0 && (
             <section style={card}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <h2 style={{ ...h2style, margin: 0 }}>🎼 Composition Brief</h2>
-                <button onClick={() => { const el = document.createElement('a'); el.href = URL.createObjectURL(new Blob([musicResult], {type:'text/plain'})); el.download = 'music-brief.txt'; el.click(); }} style={{ ...btn('secondary'), fontSize: '12px', padding: '6px 12px' }}>⬇ Download</button>
+              <h2 style={h2style}>🎼 Music Projects</h2>
+              <div style={{ display: 'grid', gap: '14px' }}>
+                {musicJobs.map(job => (
+                  <div key={job.jobId} style={{ ...listItem, padding: '16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
+                      <div>
+                        <strong style={{ fontSize: '14px' }}>{job.concept.slice(0, 80)}{job.concept.length > 80 ? '…' : ''}</strong>
+                        <p style={{ margin: '2px 0 0', fontSize: '12px', opacity: 0.55 }}>{job.genre} · {job.bpm} BPM · {fmtDur(job.durationSeconds)} · ID: {job.jobId.slice(0,8)}</p>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <span style={pill(job.status)}>{job.status}</span>
+                        {job.downloadReady && (
+                          <button onClick={() => { const a = document.createElement('a'); a.href = `${API}/api/music/${job.jobId}/download`; a.download = `trezzworld-music-${job.jobId.slice(0,8)}.wav`; a.click(); }} style={{ ...btn('primary'), padding: '6px 14px', fontSize: '12px' }}>⬇ Download WAV</button>
+                        )}
+                      </div>
+                    </div>
+                    <ProgressBar pct={job.progress} status={job.status} />
+                    <p style={{ ...hint, marginTop: '6px' }}>{job.message || job.status}</p>
+                    {job.composition && (
+                      <details style={{ marginTop: '10px' }}>
+                        <summary style={{ fontSize: '12px', opacity: 0.6, cursor: 'pointer' }}>View composition brief</summary>
+                        <pre style={{ fontSize: '11px', opacity: 0.7, marginTop: '8px', overflow: 'auto', maxHeight: '220px', background: '#06101e', padding: '10px', borderRadius: '8px' }}>{job.composition}</pre>
+                      </details>
+                    )}
+                    {job.status === 'done' && job.downloadReady && (
+                      <audio controls src={`${API}/api/music/${job.jobId}/download`} style={{ width: '100%', marginTop: '12px' }} />
+                    )}
+                    {job.error && <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#fca5a5' }}>⚠️ {job.error}</p>}
+                  </div>
+                ))}
               </div>
-              <pre style={{ whiteSpace: 'pre-wrap', fontFamily: '"Inter", system-ui, sans-serif', fontSize: '13px', lineHeight: 1.7, margin: 0, opacity: 0.9 }}>{musicResult}</pre>
             </section>
           )}
+        </div>
+      )}
+
+      {/* ── EDITOR TAB ───────────────────────────────────────────────── */}
+      {tab === 'editor' && (
+        <div style={pageWrap}>
+          <section style={heroCard}>
+            <h1 style={{ margin: '0 0 6px', fontSize: '22px' }}>✍️ Multipurpose Editor</h1>
+            <p style={{ margin: 0, opacity: 0.8, fontSize: '14px' }}>Open a creative workspace for notes, production plans, storyboards, or sketch ideas. Use the document editor or art board for any creation.</p>
+          </section>
+
+          <section style={card}>
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '18px' }}>
+              <button onClick={() => setEditorMode('doc')} style={{ ...btn(editorMode === 'doc' ? 'primary' : 'secondary'), fontSize: '13px' }}>📄 Document Editor</button>
+              <button onClick={() => setEditorMode('board')} style={{ ...btn(editorMode === 'board' ? 'primary' : 'secondary'), fontSize: '13px' }}>🖌 Art Board</button>
+              <a href="https://docs.google.com/document/create" target="_blank" rel="noreferrer" style={{ ...btn('secondary'), fontSize: '13px', textDecoration: 'none' }}>Open Google Docs</a>
+              <a href="https://www.photopea.com/" target="_blank" rel="noreferrer" style={{ ...btn('secondary'), fontSize: '13px', textDecoration: 'none' }}>Open Online Art Board</a>
+            </div>
+
+            {editorMode === 'doc' ? (
+              <div>
+                <label style={label}>Workspace Notes</label>
+                <textarea
+                  value={editorContent}
+                  onChange={e => setEditorContent(e.target.value)}
+                  rows={18}
+                  style={{ ...textarea, minHeight: '420px' }}
+                  placeholder="Write your brief, plan your media, paste storyboards, or draft an outline here..."
+                />
+                <p style={hint}>This editor is a centralized workspace for any creative or production task.</p>
+              </div>
+            ) : (
+              <div style={{ position: 'relative', minHeight: '520px', borderRadius: '16px', overflow: 'hidden', background: 'linear-gradient(135deg, rgba(8,20,40,1) 0%, rgba(11,33,65,1) 100%)', border: '1px solid rgba(56,189,248,0.12)' }}>
+                <div style={{ padding: '18px', color: '#cbd5e1' }}>
+                  <h2 style={{ ...h2style, marginTop: 0 }}>Art Board</h2>
+                  <p style={{ margin: '0 0 16px', opacity: 0.72 }}>Use this space as a sketch pad for mood, composition notes, production flow, or storyboard ideas.</p>
+                  <div style={{ width: '100%', height: '360px', background: '#06101e', borderRadius: '14px', border: '1px dashed rgba(148,163,184,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: '14px', padding: '18px' }}>
+                    <div style={{ textAlign: 'center', maxWidth: '540px' }}>
+                      <p style={{ margin: 0, opacity: 0.7 }}>Art board preview area</p>
+                      <p style={{ margin: '8px 0 0', opacity: 0.55 }}>Use Google Docs or an external art board for real graphics, then paste notes or links here.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
         </div>
       )}
 
