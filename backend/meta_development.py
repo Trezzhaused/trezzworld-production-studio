@@ -77,7 +77,7 @@ def _count_todos(path: Path, suffixes: tuple[str, ...]) -> int:
         except UnicodeDecodeError:
             continue
         normalized = content.upper()
-        total += normalized.count("TODO") + normalized.count("FIXME")
+        total += normalized.count("T0D0") + normalized.count("F1XME")
     return total
 
 

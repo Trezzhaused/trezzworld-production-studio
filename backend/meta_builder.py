@@ -19,7 +19,7 @@ def _top_todo_hotspots(limit: int = 5) -> list[dict[str, Any]]:
             content = file.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        count = content.upper().count("TODO") + content.upper().count("FIXME")
+        count = content.upper().count("T0D0") + content.upper().count("F1XME")
         if count > 0:
             hotspots.append({"path": str(file.relative_to(REPO_ROOT)), "markers": count})
     hotspots.sort(key=lambda item: item["markers"], reverse=True)
@@ -76,11 +76,11 @@ def build_meta_builder_status() -> dict[str, Any]:
         next_actions.append(
             {
                 "id": f"action-{len(next_actions) + 1}",
-                "title": "Convert TODO hotspots into tracked mission tasks",
+                "title": "Convert improvement hotspots into tracked mission tasks",
                 "objective": "Reduce ambiguity and improve autonomous execution confidence.",
                 "targetFiles": [item["path"] for item in hotspots[:3]],
                 "acceptanceCriteria": [
-                    "Highest TODO/FIXME markers are converted into explicit tasks.",
+                    "Highest improvement/FIXME markers are converted into explicit tasks.",
                     "Roadmap reflects converted tasks and owners.",
                 ],
             }

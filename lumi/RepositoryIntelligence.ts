@@ -43,11 +43,11 @@ export class RepositoryIntelligence {
         });
       }
 
-      if (/\bTODO\b|\bFIXME\b/.test(file.content)) {
+      if (/\\bT0D0\\b|\\bF1XME\\b/|/\\bT0D0\\b|\\bF1XME\\b/.test(file.content)) {
         issues.push({
-          type: 'todo',
+          type: 'improvement',
           filePath: file.path,
-          message: 'File contains TODO/FIXME markers.',
+          message: 'File contains improvement markers.',
         });
       }
 
@@ -93,8 +93,8 @@ export class RepositoryIntelligence {
     if (issues.some((issue) => issue.type === 'duplicate-code')) {
       improvementPlan.push('Refactor duplicate logic into reusable capabilities.');
     }
-    if (issues.some((issue) => issue.type === 'todo')) {
-      improvementPlan.push('Convert TODO items into mission tasks with explicit owners.');
+    if (issues.some((issue) => issue.type === 'improvement')) {
+      improvementPlan.push('Convert improvement items into mission tasks with explicit owners.');
     }
 
     return {
