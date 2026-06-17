@@ -1,0 +1,46 @@
+VIDEO_STYLES = {
+    "cinematic": {"label": "Cinematic", "color_grade": "teal_orange", "transitions": ["fade", "dissolve", "cut"]},
+    "animated": {"label": "Animated", "color_grade": "vivid", "transitions": ["wipe", "bounce", "zoom"]},
+    "slideshow": {"label": "Slideshow", "color_grade": "clean", "transitions": ["slide", "fade", "zoom"]},
+    "surreal": {"label": "Surreal", "color_grade": "psychedelic", "transitions": ["morph", "distort", "glitch"]},
+    "futuristic": {"label": "Futuristic", "color_grade": "neon_dark", "transitions": ["digital", "scan", "glitch"]},
+    "3d_enhanced": {"label": "3D Enhanced", "color_grade": "depth", "transitions": ["push", "cube", "flip"]},
+    "documentary": {"label": "Documentary", "color_grade": "natural", "transitions": ["cut", "fade"]},
+    "music_video": {"label": "Music Video", "color_grade": "high_contrast", "transitions": ["cut", "flash", "zoom"]},
+    "educational": {"label": "Educational", "color_grade": "bright", "transitions": ["fade", "slide"]},
+    "social_media": {"label": "Social Media", "color_grade": "punchy", "transitions": ["cut", "zoom", "spin"]},
+}
+RESOLUTIONS = {
+    "480p": (854, 480), "720p": (1280, 720), "1080p": (1920, 1080),
+    "1440p": (2560, 1440), "4K": (3840, 2160),
+    "square": (1080, 1080), "vertical": (1080, 1920), "ultrawide": (2560, 1080),
+}
+OUTPUT_FORMATS = {
+    "mp4": {"type": "video", "mime": "video/mp4", "label": "MP4 Video"},
+    "webm": {"type": "video", "mime": "video/webm", "label": "WebM Video"},
+    "gif": {"type": "video", "mime": "image/gif", "label": "Animated GIF"},
+    "mov": {"type": "video", "mime": "video/quicktime", "label": "MOV Video"},
+    "png": {"type": "image", "mime": "image/png", "label": "PNG Image"},
+    "jpg": {"type": "image", "mime": "image/jpeg", "label": "JPG Image"},
+    "svg": {"type": "image", "mime": "image/svg+xml", "label": "SVG Vector"},
+    "mp3": {"type": "audio", "mime": "audio/mpeg", "label": "MP3 Audio"},
+    "wav": {"type": "audio", "mime": "audio/wav", "label": "WAV Audio"},
+    "pdf": {"type": "document", "mime": "application/pdf", "label": "PDF Document"},
+    "docx": {"type": "document", "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "label": "Word Document"},
+    "pptx": {"type": "document", "mime": "application/vnd.openxmlformats-officedocument.presentationml.presentation", "label": "PowerPoint"},
+    "xlsx": {"type": "document", "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "label": "Excel"},
+    "html": {"type": "web", "mime": "text/html", "label": "HTML Page"},
+    "css": {"type": "web", "mime": "text/css", "label": "CSS Stylesheet"},
+    "js": {"type": "web", "mime": "text/javascript", "label": "JavaScript"},
+    "json": {"type": "data", "mime": "application/json", "label": "JSON Data"},
+    "csv": {"type": "data", "mime": "text/csv", "label": "CSV Data"},
+    "glb": {"type": "3d", "mime": "model/gltf-binary", "label": "3D Model (GLB)"},
+    "zip": {"type": "archive", "mime": "application/zip", "label": "ZIP Archive"},
+}
+API_KEY_REGISTRY = {
+    "OLLAMA_HOST":        {"provider": "Ollama Local",  "priority": 0},
+    "OPENROUTER_API_KEY": {"provider": "OpenRouter",    "priority": 1},
+    "GEMINI_API_KEY":     {"provider": "Google Gemini", "priority": 2},
+    "ANTHROPIC_API_KEY":  {"provider": "Claude",        "priority": 3},
+    "OPENAI_API_KEY":     {"provider": "ChatGPT",       "priority": 4},
+}
