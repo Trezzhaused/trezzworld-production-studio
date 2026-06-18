@@ -19,12 +19,18 @@ interface MissionBootResult { objective: string; missionId?: string; status: str
 interface PipelineProgress { total: number; completed: number; running: number; errored: number; percent: number; }
 interface PipelineStatus { id: string; status: string; summary: string; jobs: QueueItem[]; progress: PipelineProgress; }
 interface ChatMessage { role: 'user' | 'assistant'; content: string; model?: string; }
+interface PersistedChatMessage { role: string; content: string; model_used?: string; }
+interface ChatHistoryResponse { history: PersistedChatMessage[]; }
+interface MissionSummary { id: string; prompt: string; status: string; created_at: string; updated_at: string; summary: string; }
+interface MissionListResponse { missions: MissionSummary[]; }
 interface OllamaModel { id: string; family: string; label: string; available: boolean; }
 interface OllamaStatus { available: boolean; host: string; localModels: Array<{ name: string }>; catalogue: OllamaModel[]; superGemmaReady: boolean; installHint: string; }
 interface VideoStoryboardScene { id: string; title: string; duration_seconds: number; visual_description: string; text_overlay?: string; transition_in: string; transition_out: string; camera_motion: string; color_grade: string; }
 interface VideoStoryboard { title?: string; logline?: string; style?: string; total_duration_seconds?: number; color_palette?: string[]; audio?: Record<string, unknown>; scenes?: VideoStoryboardScene[]; }
 interface VideoJob { jobId: string; concept: string; durationSeconds: number; style: string; resolution: string; fps: number; status: string; progress: number; message: string; storyboard: VideoStoryboard; outputPath: string | null; downloadReady: boolean; error: string | null; createdAt: number; }
 interface MusicJob { jobId: string; concept: string; genre: string; bpm: number; mood: string; durationSeconds: number; status: string; progress: number; message: string; outputPath: string | null; outputFormat: string | null; compositionBrief: string; provider: string; downloadReady: boolean; error: string | null; createdAt: number; }
+interface VideoJobsResponse { jobs: VideoJob[]; }
+interface MusicJobsResponse { jobs: MusicJob[]; }
 interface ImageRenderResult { ok: boolean; provider: string; model: string; imageBase64: string | null; format: string | null; message: string; }
 interface UserKeyEntry { provider: string; name: string; description: string; cost: string; get_key_url: string; recommended: boolean; configured: boolean; key_preview?: string; added_at?: string; }
 interface UserKeysResponse { providers: UserKeyEntry[]; configured_count: number; }
@@ -425,26 +431,6 @@ export default function App() {
     return () => document.removeEventListener('mousedown', closeOnOutsideClick);
   }, []);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    Promise.allSettled([
-      fetchJson<BackendStatus>(`${API}/api/status`, controller.signal),
-      fetchJson<MetaDevelopmentStatus>(`${API}/api/meta-development/status`, controller.signal),
-      fetchJson<MetaBuilderStatus>(`${API}/api/meta-builder/status`, controller.signal),
-      fetchJson<ControlPlaneStatus>(`${API}/api/studio/control-plane`, controller.signal),
-      fetchJson<OllamaStatus>(`${API}/api/ollama/status`, controller.signal),
-      fetchJson<UserKeysResponse>(`${API}/api/lumi/user-keys`, controller.signal),
-    ]).then(([bk, meta, mb, cp, ol, keys]) => {
-      if (bk.status === 'fulfilled') setBackendStatus(bk.value);
-      if (meta.status === 'fulfilled') setMetaStatus(meta.value);
-      if (mb.status === 'fulfilled') setMetaBuilderStatus(mb.value);
-      if (cp.status === 'fulfilled') setControlPlane(cp.value);
-      if (ol.status === 'fulfilled') setOllamaStatus(ol.value);
-      if (keys.status === 'fulfilled') setUserKeys(keys.value);
-    });
-    return () => controller.abort();
-  }, []);
-
   const startPolling = useCallback((missionId: string) => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
@@ -511,6 +497,81 @@ export default function App() {
     musicPolls.current.set(jobId, timer);
   }, []);
   useEffect(() => () => { musicPolls.current.forEach(timer => clearInterval(timer)); }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const loadInitialState = async () => {
+      const [
+        bk,
+        meta,
+        mb,
+        cp,
+        ol,
+        keys,
+        missions,
+        chats,
+        videos,
+        music,
+      ] = await Promise.allSettled([
+        fetchJson<BackendStatus>(`${API}/api/status`, controller.signal),
+        fetchJson<MetaDevelopmentStatus>(`${API}/api/meta-development/status`, controller.signal),
+        fetchJson<MetaBuilderStatus>(`${API}/api/meta-builder/status`, controller.signal),
+        fetchJson<ControlPlaneStatus>(`${API}/api/studio/control-plane`, controller.signal),
+        fetchJson<OllamaStatus>(`${API}/api/ollama/status`, controller.signal),
+        fetchJson<UserKeysResponse>(`${API}/api/lumi/user-keys`, controller.signal),
+        fetchJson<MissionListResponse>(`${API}/api/pipeline/missions`, controller.signal),
+        fetchJson<ChatHistoryResponse>(`${API}/api/lumi/chat/history?limit=40`, controller.signal),
+        fetchJson<VideoJobsResponse>(`${API}/api/video/jobs`, controller.signal),
+        fetchJson<MusicJobsResponse>(`${API}/api/music/jobs`, controller.signal),
+      ]);
+
+      if (bk.status === 'fulfilled') setBackendStatus(bk.value);
+      if (meta.status === 'fulfilled') setMetaStatus(meta.value);
+      if (mb.status === 'fulfilled') setMetaBuilderStatus(mb.value);
+      if (cp.status === 'fulfilled') setControlPlane(cp.value);
+      if (ol.status === 'fulfilled') setOllamaStatus(ol.value);
+      if (keys.status === 'fulfilled') setUserKeys(keys.value);
+      if (chats.status === 'fulfilled') {
+        setChatHistory(
+          (chats.value.history ?? [])
+            .filter(message => message.role === 'user' || message.role === 'assistant')
+            .map(message => ({
+              role: message.role as ChatMessage['role'],
+              content: message.content,
+              model: message.model_used || undefined,
+            })),
+        );
+      }
+      if (videos.status === 'fulfilled') {
+        setVideoJobs(videos.value.jobs ?? []);
+        (videos.value.jobs ?? [])
+          .filter(job => job.status !== 'done' && job.status !== 'error')
+          .forEach(job => pollVideoJob(job.jobId));
+      }
+      if (music.status === 'fulfilled') {
+        setMusicJobs(music.value.jobs ?? []);
+        (music.value.jobs ?? [])
+          .filter(job => job.status !== 'done' && job.status !== 'error')
+          .forEach(job => pollMusicJob(job.jobId));
+      }
+      if (missions.status === 'fulfilled') {
+        const latestMission = (missions.value.missions ?? []).find(mission => mission.status === 'running' || mission.status === 'pending')
+          ?? missions.value.missions?.[0];
+        if (latestMission) {
+          setActiveMissionId(latestMission.id);
+          try {
+            const status = await fetchJson<PipelineStatus>(`${API}/api/pipeline/${encodeURIComponent(latestMission.id)}/status`, controller.signal);
+            setPipelineStatus(status);
+            if (status.status !== 'completed' && status.status !== 'failed') startPolling(latestMission.id);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    };
+    loadInitialState().catch(() => { /* ignore */ });
+    return () => controller.abort();
+  }, [pollMusicJob, pollVideoJob, startPolling]);
 
   const bootMission = async (event: FormEvent) => {
     event.preventDefault();
