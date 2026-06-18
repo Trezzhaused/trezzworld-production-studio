@@ -1,6 +1,4 @@
-import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
+import { CSSProperties, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 interface BackendStatus { status: string; version: string; }
 interface ReadinessCheck { category: string; goal: string; passed: boolean; }
@@ -26,194 +24,335 @@ interface OllamaStatus { available: boolean; host: string; localModels: Array<{ 
 interface VideoStoryboardScene { id: string; title: string; duration_seconds: number; visual_description: string; text_overlay?: string; transition_in: string; transition_out: string; camera_motion: string; color_grade: string; }
 interface VideoStoryboard { title?: string; logline?: string; style?: string; total_duration_seconds?: number; color_palette?: string[]; audio?: Record<string, unknown>; scenes?: VideoStoryboardScene[]; }
 interface VideoJob { jobId: string; concept: string; durationSeconds: number; style: string; resolution: string; fps: number; status: string; progress: number; message: string; storyboard: VideoStoryboard; outputPath: string | null; downloadReady: boolean; error: string | null; createdAt: number; }
-
 interface MusicJob { jobId: string; concept: string; genre: string; bpm: number; mood: string; durationSeconds: number; status: string; progress: number; message: string; outputPath: string | null; outputFormat: string | null; compositionBrief: string; provider: string; downloadReady: boolean; error: string | null; createdAt: number; }
 interface ImageRenderResult { ok: boolean; provider: string; model: string; imageBase64: string | null; format: string | null; message: string; }
-
-type Tab = 'home' | 'music' | 'video' | 'image' | 'chat' | 'code' | 'settings';
-type MusicSubTab = 'musicvideo' | 'audio';
 interface UserKeyEntry { provider: string; name: string; description: string; cost: string; get_key_url: string; recommended: boolean; configured: boolean; key_preview?: string; added_at?: string; }
 interface UserKeysResponse { providers: UserKeyEntry[]; configured_count: number; }
 
-// Use same-origin when deployed to Railway/Cloudflare; keep localhost:8000 in local dev.
-const API = (window.location.port === '5173' || window.location.port === '3000')
-  ? 'http://localhost:8000'
-  : '';
-
-// ─── Theme ────────────────────────────────────────────────────────────────────
-
 interface ThemeTokens {
-  bg: string; sidebar: string; sidebarBorder: string;
-  card: string; cardAlt: string; border: string; borderAccent: string;
-  text: string; textMuted: string; textSubtle: string;
-  accent: string; accentGrad: string; accentBtn: string;
-  accentCyan: string; green: string; red: string; yellow: string;
-  inputBg: string; inputBorder: string; inputColor: string;
-  scrollTrack: string;
+  bg: string;
+  bgRadial: string;
+  panel: string;
+  panelAlt: string;
+  panelSoft: string;
+  border: string;
+  borderStrong: string;
+  text: string;
+  textMuted: string;
+  textSoft: string;
+  accent: string;
+  accent2: string;
+  accent3: string;
+  accentGradient: string;
+  success: string;
+  warning: string;
+  danger: string;
+  input: string;
+  shadow: string;
 }
 
+type Tab = 'home' | 'music' | 'video' | 'image' | 'chat' | 'code' | 'settings';
+type MusicSubTab = 'musicvideo' | 'audio';
+
+type CreativeTemplate = {
+  id: string;
+  title: string;
+  description: string;
+  badge: string;
+  duration?: number;
+  style?: string;
+  tags: string[];
+  artwork: string;
+  actionLabel: string;
+  apply: () => void;
+};
+
+type StockAsset = {
+  id: string;
+  kind: 'video' | 'image' | 'music';
+  title: string;
+  description: string;
+  tags: string[];
+  artwork: string;
+  actionLabel: string;
+  apply: () => void;
+};
+
+const API = (window.location.port === '5173' || window.location.port === '3000') ? 'http://localhost:8000' : '';
+
 const dark: ThemeTokens = {
-  bg: '#08091a', sidebar: '#0e0f22', sidebarBorder: 'rgba(139,92,246,0.14)',
-  card: '#12142a', cardAlt: '#1a1c38', border: 'rgba(148,163,184,0.1)', borderAccent: 'rgba(139,92,246,0.22)',
-  text: '#e2e8f5', textMuted: '#8892a4', textSubtle: '#4a5568',
-  accent: '#7c3aed', accentGrad: 'linear-gradient(135deg,#7c3aed 0%,#4f46e5 100%)', accentBtn: '#7c3aed',
-  accentCyan: '#38bdf8', green: '#22c55e', red: '#ef4444', yellow: '#f59e0b',
-  inputBg: '#08091a', inputBorder: 'rgba(148,163,184,0.15)', inputColor: '#e2e8f5',
-  scrollTrack: 'rgba(255,255,255,0.04)',
+  bg: '#050816',
+  bgRadial: 'radial-gradient(circle at top left, rgba(73,92,255,0.18), transparent 35%), radial-gradient(circle at top right, rgba(56,189,248,0.12), transparent 24%), #050816',
+  panel: 'rgba(10, 16, 34, 0.88)',
+  panelAlt: 'rgba(16, 23, 46, 0.96)',
+  panelSoft: 'rgba(255,255,255,0.04)',
+  border: 'rgba(148, 163, 184, 0.16)',
+  borderStrong: 'rgba(96, 165, 250, 0.25)',
+  text: '#eef2ff',
+  textMuted: '#a8b3cf',
+  textSoft: '#7280a7',
+  accent: '#7c5cff',
+  accent2: '#38bdf8',
+  accent3: '#f472b6',
+  accentGradient: 'linear-gradient(135deg, #7c5cff 0%, #38bdf8 52%, #22d3ee 100%)',
+  success: '#22c55e',
+  warning: '#f59e0b',
+  danger: '#ef4444',
+  input: 'rgba(8, 14, 28, 0.96)',
+  shadow: '0 28px 60px rgba(0, 0, 0, 0.35)',
 };
 
 const light: ThemeTokens = {
-  bg: '#f4f4f8', sidebar: '#ffffff', sidebarBorder: 'rgba(0,0,0,0.09)',
-  card: '#ffffff', cardAlt: '#f8f7ff', border: 'rgba(0,0,0,0.08)', borderAccent: 'rgba(124,58,237,0.22)',
-  text: '#111827', textMuted: '#6b7280', textSubtle: '#9ca3af',
-  accent: '#7c3aed', accentGrad: 'linear-gradient(135deg,#7c3aed 0%,#4f46e5 100%)', accentBtn: '#7c3aed',
-  accentCyan: '#0284c7', green: '#16a34a', red: '#dc2626', yellow: '#d97706',
-  inputBg: '#fafafa', inputBorder: 'rgba(0,0,0,0.14)', inputColor: '#111827',
-  scrollTrack: 'rgba(0,0,0,0.04)',
+  bg: '#f4f7fb',
+  bgRadial: 'radial-gradient(circle at top left, rgba(124,92,255,0.14), transparent 35%), radial-gradient(circle at top right, rgba(56,189,248,0.12), transparent 24%), #f4f7fb',
+  panel: 'rgba(255, 255, 255, 0.92)',
+  panelAlt: 'rgba(255, 255, 255, 0.98)',
+  panelSoft: 'rgba(15,23,42,0.04)',
+  border: 'rgba(15, 23, 42, 0.08)',
+  borderStrong: 'rgba(76, 103, 240, 0.22)',
+  text: '#0f172a',
+  textMuted: '#475569',
+  textSoft: '#94a3b8',
+  accent: '#6d4dff',
+  accent2: '#0284c7',
+  accent3: '#ec4899',
+  accentGradient: 'linear-gradient(135deg, #6d4dff 0%, #06b6d4 100%)',
+  success: '#16a34a',
+  warning: '#d97706',
+  danger: '#dc2626',
+  input: '#f8fafc',
+  shadow: '0 24px 48px rgba(15, 23, 42, 0.08)',
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+const NAV_ITEMS: Array<{ id: Tab; icon: string; label: string; caption: string }> = [
+  { id: 'home', icon: '✦', label: 'Studio', caption: 'Mission control' },
+  { id: 'video', icon: '🎬', label: 'Video', caption: 'Runway-style editor' },
+  { id: 'music', icon: '♫', label: 'Music', caption: 'Audio + music videos' },
+  { id: 'image', icon: '◫', label: 'Images', caption: 'Render + prompts' },
+  { id: 'chat', icon: '💬', label: 'LUMI', caption: 'AI copilot' },
+  { id: 'code', icon: '⌘', label: 'Code', caption: 'Build + docs' },
+  { id: 'settings', icon: '⚙', label: 'Settings', caption: 'Providers + keys' },
+];
 
-const fmtDur = (s: number) => s >= 60 ? `${Math.floor(s/60)}m ${s % 60 > 0 ? `${s%60}s` : ''}`.trim() : `${s}s`;
+const VIDEO_STYLE_OPTIONS = ['cinematic', 'documentary', 'music video', 'game trailer', 'corporate', 'animated', 'lo-fi aesthetic', 'epic fantasy'];
+const IMAGE_STYLE_OPTIONS = ['photorealistic', 'cinematic', 'digital art', 'anime', '3d render', 'oil painting', 'watercolor', 'comic book', 'pixel art'];
+const CODE_LANGUAGES = ['typescript', 'python', 'javascript', 'lua', 'csharp', 'gdscript', 'html/css', 'sql', 'bash', 'rust', 'go', 'swift', 'kotlin', 'markdown'];
+
+const SHELL_CSS = `
+  * { box-sizing: border-box; }
+  html, body, #root { margin: 0; min-height: 100%; }
+  body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif; }
+  button, input, textarea, select { font: inherit; }
+  .studio-shell { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: 100vh; }
+  .studio-sidebar { position: sticky; top: 0; height: 100vh; overflow: auto; }
+  .studio-main { min-width: 0; }
+  .studio-grid-2 { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr); gap: 18px; }
+  .studio-grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  .studio-grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+  .studio-list { display: grid; gap: 12px; }
+  .studio-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+  .studio-scroll::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.22); border-radius: 999px; }
+  .studio-scroll::-webkit-scrollbar-track { background: transparent; }
+  .card-hover { transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
+  .card-hover:hover { transform: translateY(-2px); }
+  @media (max-width: 1240px) {
+    .studio-grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .studio-grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 980px) {
+    .studio-shell { grid-template-columns: 1fr; }
+    .studio-sidebar { position: relative; height: auto; }
+    .studio-grid-2, .studio-grid-3, .studio-grid-4 { grid-template-columns: 1fr; }
+  }
+`;
+
+const fmtDur = (seconds: number) => seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60 ? `${seconds % 60}s` : ''}`.trim() : `${seconds}s`;
 const fetchJson = async <T,>(url: string, signal?: AbortSignal): Promise<T> => {
-  const r = await fetch(url, { signal });
-  if (!r.ok) throw new Error(`${r.status}`);
-  return r.json() as Promise<T>;
+  const response = await fetch(url, { signal });
+  if (!response.ok) throw new Error(`${response.status}`);
+  return response.json() as Promise<T>;
 };
 const postJson = async <T,>(url: string, body: unknown): Promise<T> => {
-  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(`${r.status}`);
-  return r.json() as Promise<T>;
+  const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!response.ok) throw new Error(`${response.status}`);
+  return response.json() as Promise<T>;
+};
+const truncate = (value: string, max = 110) => value.length > max ? `${value.slice(0, max)}…` : value;
+const copyText = async (value: string) => {
+  try { await navigator.clipboard.writeText(value); } catch { /* ignore */ }
+};
+const downloadTextFile = (content: string, filename: string) => {
+  const anchor = document.createElement('a');
+  anchor.href = URL.createObjectURL(new Blob([content], { type: 'text/plain' }));
+  anchor.download = filename;
+  anchor.click();
+};
+const makeArtwork = (title: string, subtitle: string, start: string, end: string) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop stop-color="${start}" offset="0%"/><stop stop-color="${end}" offset="100%"/></linearGradient></defs><rect width="1200" height="720" rx="42" fill="url(#g)"/><rect x="32" y="32" width="1136" height="656" rx="30" fill="rgba(5,10,24,.18)" stroke="rgba(255,255,255,.18)"/><circle cx="1036" cy="148" r="140" fill="rgba(255,255,255,.08)"/><circle cx="178" cy="550" r="220" fill="rgba(255,255,255,.08)"/><text x="86" y="182" fill="white" font-family="Inter,Arial,sans-serif" font-size="30" opacity="0.88">TrezzWorld Studio</text><text x="86" y="350" fill="white" font-family="Inter,Arial,sans-serif" font-size="76" font-weight="700">${title.replace(/&/g, '&amp;')}</text><text x="86" y="424" fill="rgba(255,255,255,.88)" font-family="Inter,Arial,sans-serif" font-size="32">${subtitle.replace(/&/g, '&amp;')}</text></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 };
 
-// ─── Style builders (theme-aware) ─────────────────────────────────────────────
+function panelStyle(T: ThemeTokens, extra?: CSSProperties): CSSProperties {
+  return {
+    background: T.panel,
+    border: `1px solid ${T.border}`,
+    borderRadius: 24,
+    boxShadow: T.shadow,
+    backdropFilter: 'blur(18px)',
+    ...extra,
+  };
+}
 
-const mkCard = (T: ThemeTokens, extra?: React.CSSProperties): React.CSSProperties => ({
-  background: T.card, borderRadius: '16px', padding: '20px',
-  border: `1px solid ${T.border}`, boxShadow: T === dark ? '0 8px 28px rgba(0,0,0,0.35)' : '0 2px 12px rgba(0,0,0,0.07)',
-  ...extra,
-});
-const mkInput = (T: ThemeTokens): React.CSSProperties => ({
-  background: T.inputBg, border: `1px solid ${T.inputBorder}`, borderRadius: '10px',
-  color: T.inputColor, padding: '10px 14px', fontSize: '14px', width: '100%',
-  outline: 'none', boxSizing: 'border-box',
-});
-const mkSelect = (T: ThemeTokens): React.CSSProperties => ({ ...mkInput(T), width: 'auto', minWidth: '150px' });
-const mkTextarea = (T: ThemeTokens): React.CSSProperties => ({ ...mkInput(T), resize: 'vertical' as const });
-const mkLabel = (T: ThemeTokens): React.CSSProperties => ({ fontSize: '12px', fontWeight: 600, color: T.textMuted, marginBottom: '5px', display: 'block' });
-const mkHint = (T: ThemeTokens): React.CSSProperties => ({ fontSize: '12px', color: T.textSubtle, margin: '4px 0 0' });
-const mkBtn = (T: ThemeTokens, variant: 'primary'|'gradient'|'secondary'|'danger' = 'primary', disabled = false): React.CSSProperties => ({
-  background: disabled
-    ? (T === dark ? '#1a2040' : '#e5e7eb')
-    : variant === 'gradient' ? T.accentGrad
-    : variant === 'primary' ? T.accentBtn
-    : variant === 'danger' ? T.red
-    : (T === dark ? 'rgba(124,58,237,0.12)' : 'rgba(124,58,237,0.08)'),
-  color: disabled ? T.textSubtle : variant === 'secondary' ? T.accent : '#ffffff',
-  border: variant === 'secondary' ? `1px solid ${T.borderAccent}` : 'none',
-  borderRadius: '10px', padding: '10px 20px', fontWeight: 700,
-  cursor: disabled ? 'not-allowed' : 'pointer', fontSize: '14px',
-  transition: 'opacity 0.15s', opacity: disabled ? 0.6 : 1,
-});
+function inputStyle(T: ThemeTokens, extra?: CSSProperties): CSSProperties {
+  return {
+    width: '100%',
+    borderRadius: 16,
+    border: `1px solid ${T.border}`,
+    background: T.input,
+    color: T.text,
+    padding: '14px 16px',
+    outline: 'none',
+    ...extra,
+  };
+}
 
-const pill = (status: string, T: ThemeTokens): React.CSSProperties => ({
-  display: 'inline-block', padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 700,
-  background: ['active','ready','running','done'].includes(status) ? `rgba(34,197,94,0.18)` : ['in-progress','standby','scheduled'].includes(status) ? `rgba(250,204,21,0.18)` : ['error','failed'].includes(status) ? `rgba(239,68,68,0.18)` : `rgba(148,163,184,0.14)`,
-  color: ['active','ready','running','done'].includes(status) ? T.green : ['in-progress','standby','scheduled'].includes(status) ? T.yellow : ['error','failed'].includes(status) ? T.red : T.textMuted,
-});
+function buttonStyle(T: ThemeTokens, variant: 'primary' | 'secondary' | 'ghost' | 'danger' = 'primary', disabled = false): CSSProperties {
+  const background = variant === 'primary'
+    ? T.accentGradient
+    : variant === 'secondary'
+      ? T.panelSoft
+      : variant === 'danger'
+        ? T.danger
+        : 'transparent';
+  return {
+    borderRadius: 16,
+    border: variant === 'ghost' ? `1px solid ${T.border}` : variant === 'secondary' ? `1px solid ${T.borderStrong}` : 'none',
+    background,
+    color: variant === 'ghost' ? T.textMuted : '#fff',
+    padding: '12px 16px',
+    fontWeight: 700,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    opacity: disabled ? 0.55 : 1,
+  };
+}
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+function badgeStyle(T: ThemeTokens, value: string): CSSProperties {
+  const normalized = value.toLowerCase();
+  const color = normalized.includes('error') || normalized.includes('fail') ? T.danger : normalized.includes('run') || normalized.includes('active') || normalized.includes('ready') || normalized.includes('done') ? T.success : normalized.includes('plan') || normalized.includes('progress') || normalized.includes('pending') ? T.warning : T.accent2;
+  return {
+    borderRadius: 999,
+    padding: '6px 10px',
+    fontSize: 11,
+    fontWeight: 800,
+    textTransform: 'uppercase',
+    letterSpacing: 0.7,
+    color,
+    background: `${color}22`,
+    border: `1px solid ${color}33`,
+  };
+}
+
+function sectionTitleStyle(T: ThemeTokens): CSSProperties {
+  return { margin: 0, fontSize: 18, fontWeight: 800, color: T.text };
+}
 
 function ProgressBar({ pct, status, T }: { pct: number; status: string; T: ThemeTokens }) {
-  const col = status === 'done' || status === 'completed' ? T.green : status === 'error' || status === 'failed' ? T.red : T.accentCyan;
+  const color = status === 'done' || status === 'completed' ? T.success : status === 'error' || status === 'failed' ? T.danger : T.accent2;
   return (
-    <div style={{ height: '5px', background: T.scrollTrack, borderRadius: '999px', overflow: 'hidden' }}>
-      <div style={{ height: '100%', width: `${pct}%`, background: col, borderRadius: '999px', transition: 'width 0.5s ease' }} />
+    <div style={{ height: 8, background: T.panelSoft, borderRadius: 999, overflow: 'hidden' }}>
+      <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 999, transition: 'width .3s ease' }} />
     </div>
   );
 }
 
-function StatusDot({ ok, T }: { ok: boolean; T: ThemeTokens }) {
-  return <span style={{ display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: ok ? T.green : T.textSubtle, marginRight: '5px', flexShrink: 0 }} />;
-}
-
-// ─── Sidebar ──────────────────────────────────────────────────────────────────
-
-const NAV_ITEMS: Array<{ id: Tab; icon: string; label: string }> = [
-  { id: 'home',     icon: '🏠', label: 'Home' },
-  { id: 'music',    icon: '🎵', label: 'Music Studio' },
-  { id: 'video',    icon: '🎥', label: 'Video Editor' },
-  { id: 'image',    icon: '🖼', label: 'Image Generator' },
-  { id: 'chat',     icon: '💬', label: 'LUMI Chat' },
-  { id: 'code',     icon: '💻', label: 'Code Generator' },
-  { id: 'settings', icon: '⚙️', label: 'Settings' },
-];
-
-function Sidebar({ tab, setTab, T, isDark, onToggleDark, isOnline }:
-  { tab: Tab; setTab: (t: Tab) => void; T: ThemeTokens; isDark: boolean; onToggleDark: () => void; isOnline: boolean }) {
+function MetricCard({ T, label, value, hint }: { T: ThemeTokens; label: string; value: string; hint: string }) {
   return (
-    <aside style={{ width: '220px', minHeight: '100vh', background: T.sidebar, borderRight: `1px solid ${T.sidebarBorder}`, display: 'flex', flexDirection: 'column', position: 'fixed', left: 0, top: 0, bottom: 0, zIndex: 50, flexShrink: 0 }}>
-      {/* Logo */}
-      <div style={{ padding: '22px 20px 18px', borderBottom: `1px solid ${T.sidebarBorder}` }}>
-        <div style={{ fontSize: '19px', fontWeight: 900, background: T.accentGrad, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text', letterSpacing: '-0.5px' }}>TrezzWorld</div>
-        <div style={{ fontSize: '11px', color: T.textSubtle, marginTop: '2px', fontWeight: 500 }}>Production Studio</div>
-      </div>
-
-      {/* Nav */}
-      <nav style={{ flex: 1, padding: '10px 0', overflowY: 'auto' }}>
-        {NAV_ITEMS.map(item => {
-          const active = tab === item.id;
-          return (
-            <button key={item.id} onClick={() => setTab(item.id)} style={{ display: 'flex', alignItems: 'center', gap: '11px', width: '100%', padding: '11px 20px', background: active ? (isDark ? 'rgba(124,58,237,0.16)' : 'rgba(124,58,237,0.08)') : 'transparent', color: active ? T.accent : T.textMuted, border: 'none', borderLeft: `3px solid ${active ? T.accent : 'transparent'}`, cursor: 'pointer', fontSize: '13px', fontWeight: active ? 700 : 400, textAlign: 'left', transition: 'background 0.15s, color 0.15s' }}>
-              <span style={{ fontSize: '15px', width: '18px', textAlign: 'center' }}>{item.icon}</span>
-              <span>{item.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-
-      {/* Bottom controls */}
-      <div style={{ padding: '16px 20px', borderTop: `1px solid ${T.sidebarBorder}`, display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '12px', color: T.textMuted }}>
-          <StatusDot ok={isOnline} T={T} />
-          <span style={{ fontWeight: 500 }}>{isOnline ? 'Studio Online' : 'Studio Offline'}</span>
-        </div>
-        <button onClick={onToggleDark} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', border: `1px solid ${T.sidebarBorder}`, borderRadius: '8px', padding: '8px 12px', cursor: 'pointer', color: T.text, fontSize: '12px', fontWeight: 600, width: '100%' }}>
-          <span>{isDark ? '☀️' : '🌙'}</span>
-          <span>{isDark ? 'Light Mode' : 'Dark Mode'}</span>
-        </button>
-      </div>
-    </aside>
+    <div className="card-hover" style={panelStyle(T, { padding: 18 })}>
+      <div style={{ color: T.textSoft, fontSize: 12, textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: 10 }}>{label}</div>
+      <div style={{ fontSize: 30, fontWeight: 900, color: T.text, marginBottom: 6 }}>{value}</div>
+      <div style={{ color: T.textMuted, fontSize: 13, lineHeight: 1.5 }}>{hint}</div>
+    </div>
   );
 }
 
-// ─── Main App ─────────────────────────────────────────────────────────────────
+function TemplateCard({ T, template }: { T: ThemeTokens; template: CreativeTemplate }) {
+  return (
+    <div className="card-hover" style={panelStyle(T, { padding: 14, overflow: 'hidden' })}>
+      <img src={template.artwork} alt={template.title} style={{ width: '100%', aspectRatio: '16 / 10', objectFit: 'cover', borderRadius: 18, marginBottom: 14, border: `1px solid ${T.border}` }} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'start' }}>
+        <div>
+          <div style={{ color: T.accent2, fontSize: 11, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8 }}>{template.badge}</div>
+          <h3 style={{ margin: 0, color: T.text, fontSize: 16 }}>{template.title}</h3>
+        </div>
+        {template.duration ? <span style={badgeStyle(T, `${template.duration}s`)}>{fmtDur(template.duration)}</span> : null}
+      </div>
+      <p style={{ color: T.textMuted, fontSize: 13, lineHeight: 1.6, margin: '10px 0 12px' }}>{template.description}</p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+        {template.tags.map(tag => <span key={tag} style={{ ...badgeStyle(T, 'tag'), fontSize: 10, padding: '5px 8px', color: T.textMuted }}>{tag}</span>)}
+      </div>
+      <button onClick={template.apply} style={{ ...buttonStyle(T, 'secondary'), width: '100%' }}>{template.actionLabel}</button>
+    </div>
+  );
+}
+
+function AssetCard({ T, asset }: { T: ThemeTokens; asset: StockAsset }) {
+  return (
+    <div className="card-hover" style={panelStyle(T, { padding: 12, overflow: 'hidden' })}>
+      <img src={asset.artwork} alt={asset.title} style={{ width: '100%', aspectRatio: '4 / 3', objectFit: 'cover', borderRadius: 16, marginBottom: 12, border: `1px solid ${T.border}` }} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+        <strong style={{ color: T.text, fontSize: 14 }}>{asset.title}</strong>
+        <span style={badgeStyle(T, asset.kind)}>{asset.kind}</span>
+      </div>
+      <p style={{ color: T.textMuted, fontSize: 12, lineHeight: 1.6, margin: '8px 0 10px' }}>{asset.description}</p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+        {asset.tags.map(tag => <span key={tag} style={{ ...badgeStyle(T, 'tag'), fontSize: 10, padding: '4px 8px', color: T.textMuted }}>{tag}</span>)}
+      </div>
+      <button onClick={asset.apply} style={{ ...buttonStyle(T, 'ghost'), width: '100%' }}>{asset.actionLabel}</button>
+    </div>
+  );
+}
+
+function QueueList({ T, items }: { T: ThemeTokens; items: QueueItem[] }) {
+  if (items.length === 0) return <div style={{ color: T.textSoft, fontSize: 13 }}>No active jobs yet. Launch a mission or create media to populate the queue.</div>;
+  return (
+    <div className="studio-list">
+      {items.map(item => (
+        <div key={item.jobId ?? item.actionId} style={{ ...panelStyle(T, { padding: 14, background: T.panelSoft, boxShadow: 'none' }) }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'start' }}>
+            <div>
+              <strong style={{ display: 'block', color: T.text, fontSize: 14 }}>{item.name}</strong>
+              <div style={{ color: T.textSoft, fontSize: 12, marginTop: 4 }}>{item.workerId} · {item.stage}{item.score != null ? ` · score ${item.score.toFixed(2)}` : ''}</div>
+            </div>
+            <span style={badgeStyle(T, item.status)}>{item.status}</span>
+          </div>
+          {item.targetFiles.length > 0 && <div style={{ color: T.textMuted, fontSize: 12, marginTop: 10 }}>{item.targetFiles.slice(0, 3).join(' · ')}</div>}
+          {item.error && <div style={{ color: T.danger, fontSize: 12, marginTop: 10 }}>{item.error}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function App() {
-  // Theme
   const [isDark, setIsDark] = useState(true);
   const T = isDark ? dark : light;
 
-  // Navigation
-  const [tab, setTab] = useState<Tab>('home');
+  const [tab, setTab] = useState<Tab>('video');
   const [musicSubTab, setMusicSubTab] = useState<MusicSubTab>('musicvideo');
 
-  // Backend data
   const [backendStatus, setBackendStatus] = useState<BackendStatus | null>(null);
   const [metaStatus, setMetaStatus] = useState<MetaDevelopmentStatus | null>(null);
   const [metaBuilderStatus, setMetaBuilderStatus] = useState<MetaBuilderStatus | null>(null);
   const [controlPlane, setControlPlane] = useState<ControlPlaneStatus | null>(null);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
 
-  // Mission
-  const [missionPrompt, setMissionPrompt] = useState('Build a Roblox game called TrezzWorld Adventures, create original 3D assets, music, voice acting, a 5-minute cinematic trailer, website, documentation, marketing campaign, and prepare everything for publishing.');
+  const [missionPrompt, setMissionPrompt] = useState('Build a Roblox game called TrezzWorld Adventures, create original 3D assets, music, voice acting, a cinematic trailer, website, documentation, and launch campaign.');
   const [missionBoot, setMissionBoot] = useState<MissionBootResult | null>(null);
   const [loadingMission, setLoadingMission] = useState(false);
   const [activeMissionId, setActiveMissionId] = useState<string | null>(null);
   const [pipelineStatus, setPipelineStatus] = useState<PipelineStatus | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Chat
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [loadingChat, setLoadingChat] = useState(false);
@@ -222,17 +361,16 @@ export default function App() {
   const [chatDomain, setChatDomain] = useState('default');
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Video
   const [videoConcept, setVideoConcept] = useState('');
-  const [videoDuration, setVideoDuration] = useState(60);
+  const [videoDuration, setVideoDuration] = useState(30);
   const [videoStyle, setVideoStyle] = useState('cinematic');
   const [videoResolution, setVideoResolution] = useState('1080p');
   const [videoFps, setVideoFps] = useState(24);
   const [videoJobs, setVideoJobs] = useState<VideoJob[]>([]);
   const [creatingVideo, setCreatingVideo] = useState(false);
+  const [videoQuickPrompt, setVideoQuickPrompt] = useState('');
   const videoPolls = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
-  // Music — brief + real audio
   const [musicConcept, setMusicConcept] = useState('');
   const [musicGenre, setMusicGenre] = useState('cinematic');
   const [musicBpm, setMusicBpm] = useState(120);
@@ -244,7 +382,6 @@ export default function App() {
   const [creatingMusicJob, setCreatingMusicJob] = useState(false);
   const musicPolls = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
-  // Image — prompts + real render
   const [imageConcept, setImageConcept] = useState('');
   const [imageStyle, setImageStyle] = useState('photorealistic');
   const [imageAspect, setImageAspect] = useState('16:9');
@@ -255,13 +392,11 @@ export default function App() {
   const [imageRenderResult, setImageRenderResult] = useState<ImageRenderResult | null>(null);
   const [renderingImage, setRenderingImage] = useState(false);
 
-  // Code
   const [codePrompt, setCodePrompt] = useState('');
   const [codeLanguage, setCodeLanguage] = useState('typescript');
   const [codeResult, setCodeResult] = useState('');
   const [generatingCode, setGeneratingCode] = useState(false);
 
-  // User API key management
   const [userKeys, setUserKeys] = useState<UserKeysResponse | null>(null);
   const [addKeyProvider, setAddKeyProvider] = useState('openrouter');
   const [addKeyValue, setAddKeyValue] = useState('');
@@ -269,7 +404,6 @@ export default function App() {
   const [addKeyLoading, setAddKeyLoading] = useState(false);
   const [addKeyMsg, setAddKeyMsg] = useState('');
 
-  // Music Video creation
   const [mvSongName, setMvSongName] = useState('');
   const [mvPhotos, setMvPhotos] = useState<string[]>([]);
   const [mvDescription, setMvDescription] = useState('');
@@ -279,19 +413,15 @@ export default function App() {
   const [mvDuration, setMvDuration] = useState(120);
   const [creatingMv, setCreatingMv] = useState(false);
 
-  // Video quick prompt (Descript-style)
-  const [videoQuickPrompt, setVideoQuickPrompt] = useState('');
-
-  // ── Initial data load ──────────────────────────────────────────────────────
   useEffect(() => {
-    const ctrl = new AbortController();
+    const controller = new AbortController();
     Promise.allSettled([
-      fetchJson<BackendStatus>(`${API}/api/status`, ctrl.signal),
-      fetchJson<MetaDevelopmentStatus>(`${API}/api/meta-development/status`, ctrl.signal),
-      fetchJson<MetaBuilderStatus>(`${API}/api/meta-builder/status`, ctrl.signal),
-      fetchJson<ControlPlaneStatus>(`${API}/api/studio/control-plane`, ctrl.signal),
-      fetchJson<{ available: boolean; host: string; localModels: Array<{name:string}>; catalogue: OllamaModel[]; superGemmaReady: boolean; installHint: string }>(`${API}/api/ollama/status`, ctrl.signal),
-      fetchJson<UserKeysResponse>(`${API}/api/lumi/user-keys`, ctrl.signal),
+      fetchJson<BackendStatus>(`${API}/api/status`, controller.signal),
+      fetchJson<MetaDevelopmentStatus>(`${API}/api/meta-development/status`, controller.signal),
+      fetchJson<MetaBuilderStatus>(`${API}/api/meta-builder/status`, controller.signal),
+      fetchJson<ControlPlaneStatus>(`${API}/api/studio/control-plane`, controller.signal),
+      fetchJson<OllamaStatus>(`${API}/api/ollama/status`, controller.signal),
+      fetchJson<UserKeysResponse>(`${API}/api/lumi/user-keys`, controller.signal),
     ]).then(([bk, meta, mb, cp, ol, keys]) => {
       if (bk.status === 'fulfilled') setBackendStatus(bk.value);
       if (meta.status === 'fulfilled') setMetaStatus(meta.value);
@@ -300,76 +430,104 @@ export default function App() {
       if (ol.status === 'fulfilled') setOllamaStatus(ol.value);
       if (keys.status === 'fulfilled') setUserKeys(keys.value);
     });
-    return () => ctrl.abort();
+    return () => controller.abort();
   }, []);
 
-  // ── Pipeline polling ───────────────────────────────────────────────────────
   const startPolling = useCallback((missionId: string) => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
       try {
         const data = await fetchJson<PipelineStatus>(`${API}/api/pipeline/${encodeURIComponent(missionId)}/status`);
         setPipelineStatus(data);
-        if (data.status === 'completed' || data.status === 'failed') { clearInterval(pollRef.current!); pollRef.current = null; }
-      } catch { /* backend offline */ }
+        if (data.status === 'completed' || data.status === 'failed') {
+          clearInterval(pollRef.current!);
+          pollRef.current = null;
+        }
+      } catch {
+        /* ignore */
+      }
     }, 2500);
   }, []);
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
-  // ── Chat scroll ────────────────────────────────────────────────────────────
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatHistory]);
 
-  // ── Video job polling ──────────────────────────────────────────────────────
   const pollVideoJob = useCallback((jobId: string) => {
     if (videoPolls.current.has(jobId)) return;
     const timer = setInterval(async () => {
       try {
         const job = await fetchJson<VideoJob>(`${API}/api/video/${jobId}/status`);
-        setVideoJobs(prev => { const next = [...prev]; const idx = next.findIndex(j => j.jobId === jobId); if (idx >= 0) next[idx] = job; else next.unshift(job); return next; });
-        if (job.status === 'done' || job.status === 'error') { clearInterval(timer); videoPolls.current.delete(jobId); }
-      } catch { clearInterval(timer); videoPolls.current.delete(jobId); }
+        setVideoJobs(prev => {
+          const next = [...prev];
+          const index = next.findIndex(item => item.jobId === jobId);
+          if (index >= 0) next[index] = job; else next.unshift(job);
+          return next;
+        });
+        if (job.status === 'done' || job.status === 'error') {
+          clearInterval(timer);
+          videoPolls.current.delete(jobId);
+        }
+      } catch {
+        clearInterval(timer);
+        videoPolls.current.delete(jobId);
+      }
     }, 3000);
     videoPolls.current.set(jobId, timer);
   }, []);
-  useEffect(() => () => { videoPolls.current.forEach(t => clearInterval(t)); }, []);
+  useEffect(() => () => { videoPolls.current.forEach(timer => clearInterval(timer)); }, []);
 
-  // ── Music job polling ──────────────────────────────────────────────────────
   const pollMusicJob = useCallback((jobId: string) => {
     if (musicPolls.current.has(jobId)) return;
     const timer = setInterval(async () => {
       try {
         const job = await fetchJson<MusicJob>(`${API}/api/music/${jobId}/status`);
-        setMusicJobs(prev => { const next = [...prev]; const idx = next.findIndex(j => j.jobId === jobId); if (idx >= 0) next[idx] = job; else next.unshift(job); return next; });
-        if (job.status === 'done' || job.status === 'error') { clearInterval(timer); musicPolls.current.delete(jobId); }
-      } catch { clearInterval(timer); musicPolls.current.delete(jobId); }
+        setMusicJobs(prev => {
+          const next = [...prev];
+          const index = next.findIndex(item => item.jobId === jobId);
+          if (index >= 0) next[index] = job; else next.unshift(job);
+          return next;
+        });
+        if (job.status === 'done' || job.status === 'error') {
+          clearInterval(timer);
+          musicPolls.current.delete(jobId);
+        }
+      } catch {
+        clearInterval(timer);
+        musicPolls.current.delete(jobId);
+      }
     }, 3000);
     musicPolls.current.set(jobId, timer);
   }, []);
-  useEffect(() => () => { musicPolls.current.forEach(t => clearInterval(t)); }, []);
+  useEffect(() => () => { musicPolls.current.forEach(timer => clearInterval(timer)); }, []);
 
-  // ── Handlers ───────────────────────────────────────────────────────────────
-
-  const bootMission = async (e: FormEvent) => {
-    e.preventDefault();
+  const bootMission = async (event: FormEvent) => {
+    event.preventDefault();
     setLoadingMission(true);
     try {
       const payload = await postJson<MissionBootResult>(`${API}/api/studio/control-plane/boot`, { prompt: missionPrompt });
       setMissionBoot(payload);
-      if (payload.missionId) { setActiveMissionId(payload.missionId); startPolling(payload.missionId); }
-    } catch { setMissionBoot(null); } finally { setLoadingMission(false); }
+      if (payload.missionId) {
+        setActiveMissionId(payload.missionId);
+        startPolling(payload.missionId);
+      }
+    } catch {
+      setMissionBoot(null);
+    } finally {
+      setLoadingMission(false);
+    }
   };
 
-  const sendChat = async (e: FormEvent) => {
-    e.preventDefault();
+  const sendChat = async (event: FormEvent) => {
+    event.preventDefault();
     if (!chatInput.trim()) return;
-    const userMsg: ChatMessage = { role: 'user', content: chatInput };
-    const requestHistory = [...chatHistory.slice(-20), userMsg].map(m => ({ role: m.role, content: m.content }));
-    setChatHistory(prev => [...prev, userMsg]);
+    const userMessage: ChatMessage = { role: 'user', content: chatInput };
+    const requestHistory = [...chatHistory.slice(-20), userMessage].map(message => ({ role: message.role, content: message.content }));
+    setChatHistory(prev => [...prev, userMessage]);
     setChatInput('');
     setLoadingChat(true);
     try {
-      const data = await postJson<{ content: string; model: string; ok: boolean }>(`${API}/api/lumi/chat`, {
-        message: userMsg.content,
+      const data = await postJson<{ content: string; model: string }>(`${API}/api/lumi/chat`, {
+        message: userMessage.content,
         missionId: activeMissionId,
         history: requestHistory,
         useOllama,
@@ -378,12 +536,14 @@ export default function App() {
       });
       setChatHistory(prev => [...prev, { role: 'assistant', content: data.content, model: data.model }]);
     } catch {
-      setChatHistory(prev => [...prev, { role: 'assistant', content: '⚠️ LUMI unavailable. Start backend + set OPENROUTER_API_KEY (or start Ollama).' }]);
-    } finally { setLoadingChat(false); }
+      setChatHistory(prev => [...prev, { role: 'assistant', content: '⚠️ LUMI unavailable. Start the backend and configure OPENROUTER_API_KEY or Ollama.' }]);
+    } finally {
+      setLoadingChat(false);
+    }
   };
 
-  const startVideoCreation = async (e: FormEvent) => {
-    e.preventDefault();
+  const startVideoCreation = async (event: FormEvent) => {
+    event.preventDefault();
     if (!videoConcept.trim()) return;
     setCreatingVideo(true);
     try {
@@ -396,89 +556,173 @@ export default function App() {
       });
       setVideoJobs(prev => [job, ...prev]);
       pollVideoJob(job.jobId);
-    } catch { alert('Failed to start video creation. Is the backend running?'); }
-    finally { setCreatingVideo(false); }
+    } catch {
+      alert('Failed to start video creation. Is the backend running?');
+    } finally {
+      setCreatingVideo(false);
+    }
   };
 
-  const startMusicCreation = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const startQuickVideo = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!videoQuickPrompt.trim() && !videoConcept.trim()) return;
+    const concept = videoQuickPrompt.trim() || videoConcept.trim();
+    setCreatingVideo(true);
+    try {
+      const job = await postJson<VideoJob>(`${API}/api/video/create`, {
+        concept,
+        durationSeconds: videoDuration,
+        style: videoStyle,
+        resolution: videoResolution,
+        fps: videoFps,
+      });
+      setVideoJobs(prev => [job, ...prev]);
+      pollVideoJob(job.jobId);
+      setVideoQuickPrompt('');
+      setVideoConcept(concept);
+    } catch {
+      alert('Failed to start video creation. Is the backend running?');
+    } finally {
+      setCreatingVideo(false);
+    }
+  };
+
+  const startMusicCreation = async (event: FormEvent) => {
+    event.preventDefault();
     if (!musicConcept.trim()) return;
     setCreatingMusicJob(true);
     try {
       const job = await postJson<MusicJob>(`${API}/api/music/create`, {
-        concept: musicConcept, genre: musicGenre, bpm: musicBpm, mood: musicMood, durationSeconds: musicDuration,
+        concept: musicConcept,
+        genre: musicGenre,
+        bpm: musicBpm,
+        mood: musicMood,
+        durationSeconds: musicDuration,
       });
       setMusicJobs(prev => [job, ...prev]);
       pollMusicJob(job.jobId);
-    } catch { alert('Failed to start music creation. Is the backend running?'); }
-    finally { setCreatingMusicJob(false); }
+    } catch {
+      alert('Failed to start music creation. Is the backend running?');
+    } finally {
+      setCreatingMusicJob(false);
+    }
   };
 
-  const renderRealImage = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const createMusicVideo = async (event: FormEvent) => {
+    event.preventDefault();
+    const concept = [
+      mvSongName ? `Music video for "${mvSongName}".` : 'Untitled music video.',
+      mvDescription.trim(),
+      mvTitle ? `Title: ${mvTitle}.` : '',
+      mvAuthor ? `By: ${mvAuthor}.` : '',
+      `Style: ${mvStyle}.`,
+      'Create cinematic visuals synchronized to the music with emotional scenes and premium transitions.',
+    ].filter(Boolean).join(' ');
+    setCreatingMv(true);
+    try {
+      const job = await postJson<VideoJob>(`${API}/api/video/create`, {
+        concept,
+        durationSeconds: mvDuration,
+        style: 'music video',
+        resolution: '1080p',
+        fps: 24,
+      });
+      setVideoJobs(prev => [job, ...prev]);
+      pollVideoJob(job.jobId);
+      setTab('video');
+    } catch {
+      alert('Failed to start music video creation. Is the backend running?');
+    } finally {
+      setCreatingMv(false);
+    }
+  };
+
+  const generateMusic = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!musicConcept.trim()) return;
+    setGeneratingMusic(true);
+    setMusicResult('');
+    try {
+      const data = await postJson<{ composition: string }>(`${API}/api/music/generate`, {
+        concept: musicConcept,
+        genre: musicGenre,
+        bpm: musicBpm,
+        mood: musicMood,
+        durationSeconds: musicDuration,
+      });
+      setMusicResult(data.composition);
+    } catch {
+      setMusicResult('⚠️ Music generation failed. Is the backend running with OPENROUTER_API_KEY set?');
+    } finally {
+      setGeneratingMusic(false);
+    }
+  };
+
+  const renderRealImage = async (event: FormEvent) => {
+    event.preventDefault();
     if (!imageRenderPrompt.trim()) return;
     setRenderingImage(true);
     setImageRenderResult(null);
     try {
       const data = await postJson<ImageRenderResult>(`${API}/api/image/render`, {
-        prompt: imageRenderPrompt, style: imageStyle, width: 1024, height: 576,
+        prompt: imageRenderPrompt,
+        style: imageStyle,
+        width: imageAspect === '9:16' ? 1024 : 1024,
+        height: imageAspect === '9:16' ? 1820 : imageAspect === '1:1' ? 1024 : 576,
       });
       setImageRenderResult(data);
-    } catch { setImageRenderResult({ ok: false, provider: 'none', model: 'none', imageBase64: null, format: null, message: '⚠️ Image render failed. Is the backend running?' }); }
-    finally { setRenderingImage(false); }
+    } catch {
+      setImageRenderResult({ ok: false, provider: 'none', model: 'none', imageBase64: null, format: null, message: '⚠️ Image render failed. Is the backend running?' });
+    } finally {
+      setRenderingImage(false);
+    }
   };
 
-
-  const generateMusic = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!musicConcept.trim()) return;
-    setGeneratingMusic(true);
-    setMusicResult('');
-    try {
-      const data = await postJson<{ composition: string; model: string; ok: boolean }>(`${API}/api/music/generate`, {
-        concept: musicConcept, genre: musicGenre, bpm: musicBpm, mood: musicMood, durationSeconds: musicDuration,
-      });
-      setMusicResult(data.composition);
-    } catch { setMusicResult('⚠️ Music generation failed. Is the backend running with OPENROUTER_API_KEY set?'); }
-    finally { setGeneratingMusic(false); }
-  };
-
-  const generateImage = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const generateImage = async (event: FormEvent) => {
+    event.preventDefault();
     if (!imageConcept.trim()) return;
     setGeneratingImage(true);
     setImageResult('');
     try {
-      const data = await postJson<{ output: string; model: string; ok: boolean }>(`${API}/api/image/generate`, {
-        concept: imageConcept, style: imageStyle, aspectRatio: imageAspect, count: imageCount,
+      const data = await postJson<{ output: string }>(`${API}/api/image/generate`, {
+        concept: imageConcept,
+        style: imageStyle,
+        aspectRatio: imageAspect,
+        count: imageCount,
       });
       setImageResult(data.output);
-    } catch { setImageResult('⚠️ Image prompt generation failed. Is the backend running?'); }
-    finally { setGeneratingImage(false); }
+    } catch {
+      setImageResult('⚠️ Image prompt generation failed. Is the backend running?');
+    } finally {
+      setGeneratingImage(false);
+    }
   };
 
-  const generateCode = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const generateCode = async (event: FormEvent) => {
+    event.preventDefault();
     if (!codePrompt.trim()) return;
     setGeneratingCode(true);
     setCodeResult('');
     try {
-      const data = await postJson<{ content: string; model: string; ok: boolean }>(`${API}/api/lumi/chat`, {
-        message: `Generate complete, production-ready ${codeLanguage} code for:\n${codePrompt}\n\nProvide well-commented, clean, runnable code with no placeholders.`,
+      const data = await postJson<{ content: string }>(`${API}/api/lumi/chat`, {
+        message: `Generate complete, production-ready ${codeLanguage} code for:\n${codePrompt}\n\nProvide clean, runnable output with no placeholders.`,
         domain: 'code',
       });
       setCodeResult(data.content);
-    } catch { setCodeResult('⚠️ Code generation failed. Is the backend running with OPENROUTER_API_KEY set?'); }
-    finally { setGeneratingCode(false); }
+    } catch {
+      setCodeResult('⚠️ Code generation failed. Is the backend running with OPENROUTER_API_KEY set?');
+    } finally {
+      setGeneratingCode(false);
+    }
   };
 
-  const saveUserKey = async (e: FormEvent) => {
-    e.preventDefault();
+  const saveUserKey = async (event: FormEvent) => {
+    event.preventDefault();
     if (!addKeyValue.trim()) return;
     setAddKeyLoading(true);
     setAddKeyMsg('');
     try {
-      const data = await postJson<{ ok: boolean; message: string }>(`${API}/api/lumi/user-key`, {
+      const data = await postJson<{ message: string }>(`${API}/api/lumi/user-key`, {
         provider: addKeyProvider,
         api_key: addKeyValue.trim(),
         label: addKeyLabel.trim(),
@@ -487,8 +731,11 @@ export default function App() {
       setAddKeyValue('');
       const fresh = await fetchJson<UserKeysResponse>(`${API}/api/lumi/user-keys`);
       setUserKeys(fresh);
-    } catch { setAddKeyMsg('⚠️ Failed to save key. Is the backend running?'); }
-    finally { setAddKeyLoading(false); }
+    } catch {
+      setAddKeyMsg('⚠️ Failed to save key. Is the backend running?');
+    } finally {
+      setAddKeyLoading(false);
+    }
   };
 
   const removeUserKey = async (provider: string) => {
@@ -496,980 +743,917 @@ export default function App() {
       await fetch(`${API}/api/lumi/user-key/${provider}`, { method: 'DELETE' });
       const fresh = await fetchJson<UserKeysResponse>(`${API}/api/lumi/user-keys`);
       setUserKeys(fresh);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   };
 
-  // ── Derived state ──────────────────────────────────────────────────────────
-  const activeQueue = pipelineStatus?.jobs ?? missionBoot?.executionQueue ?? controlPlane?.executionQueue ?? [];
+  const isBackendUp = Boolean(backendStatus);
+  const isOllamaUp = ollamaStatus?.available ?? false;
   const readiness = controlPlane?.productionReadiness.score ?? metaStatus?.productionReadiness.score ?? 0;
   const pipelinePct = pipelineStatus?.progress.percent ?? 0;
-  const isBackendUp = !!backendStatus;
-  const isOllamaUp = ollamaStatus?.available ?? false;
-  const availableOllamaModels = ollamaStatus?.catalogue.filter(m => m.available) ?? [];
-  const mvJobs = videoJobs.filter(j => j.style === 'music video');
+  const availableOllamaModels = ollamaStatus?.catalogue.filter(model => model.available) ?? [];
+  const activeQueue = pipelineStatus?.jobs ?? missionBoot?.executionQueue ?? controlPlane?.executionQueue ?? [];
+  const mvJobs = videoJobs.filter(job => job.style === 'music video');
 
-  // ── Handlers: Music Video & Quick Video ───────────────────────────────────
+  const videoTemplates = useMemo<CreativeTemplate[]>(() => [
+    {
+      id: 'launch-film',
+      title: 'Launch Film',
+      description: 'A high-end runway-style product reveal with bold supers, clean pacing, and a crisp closing CTA.',
+      badge: 'Featured template',
+      duration: 30,
+      style: 'cinematic',
+      tags: ['Hero', 'Brand', 'Launch'],
+      artwork: makeArtwork('Launch Film', 'Studio reveal template', '#5b5bd6', '#0ea5e9'),
+      actionLabel: 'Use launch template',
+      apply: () => { setTab('video'); setVideoStyle('cinematic'); setVideoDuration(30); setVideoConcept('Create a premium launch film for TrezzWorld Production Studio with futuristic UI overlays, sleek camera moves, product feature callouts, and a cinematic final logo reveal.'); setVideoQuickPrompt('Create a premium launch film for TrezzWorld Production Studio.'); },
+    },
+    {
+      id: 'music-drop',
+      title: 'Music Drop Visualizer',
+      description: 'Album art, beat-synced lighting, artist supers, and motion blur transitions for singles or EP rollouts.',
+      badge: 'Music video',
+      duration: 45,
+      style: 'music video',
+      tags: ['Audio', 'Artist', 'Promo'],
+      artwork: makeArtwork('Music Drop', 'Beat-led promo video', '#c026d3', '#2563eb'),
+      actionLabel: 'Build music rollout',
+      apply: () => { setTab('music'); setMusicSubTab('musicvideo'); setMvSongName('TrezzWorld Anthem'); setMvTitle('TrezzWorld Anthem'); setMvDescription('Pulse-reactive neon performance video with intimate portrait shots, crowd energy, and premium motion graphics.'); setMvStyle('music video'); setMvDuration(45); },
+    },
+    {
+      id: 'game-trailer',
+      title: 'Game Trailer Cutdown',
+      description: 'Open with a world reveal, move into character moments, then finish with platform and launch-date cards.',
+      badge: 'Trailer',
+      duration: 60,
+      style: 'game trailer',
+      tags: ['Gameplay', 'Worldbuilding', 'CTA'],
+      artwork: makeArtwork('Game Trailer', 'Epic reveal cutdown', '#0f766e', '#7c3aed'),
+      actionLabel: 'Cut a trailer',
+      apply: () => { setTab('video'); setVideoStyle('game trailer'); setVideoDuration(60); setVideoConcept('Create a game trailer for TrezzWorld Adventures featuring the world map, heroes, battles, traversal, and a cinematic end slate with launch messaging.'); },
+    },
+    {
+      id: 'social-pack',
+      title: 'Social Clip Pack',
+      description: 'Vertical social-first outputs, punch-in crops, hook cards, and quick export settings for promos.',
+      badge: 'Vertical content',
+      duration: 20,
+      style: 'animated',
+      tags: ['9:16', 'Shortform', 'Ads'],
+      artwork: makeArtwork('Social Pack', 'Reels + Shorts builder', '#ea580c', '#db2777'),
+      actionLabel: 'Create social cuts',
+      apply: () => { setTab('video'); setVideoStyle('animated'); setVideoResolution('vertical'); setVideoDuration(20); setVideoConcept('Create three vertical teaser clips for studio.trezzhaus.com that show templates, AI generation, and creator workflows with strong hooks.'); },
+    },
+  ], []);
 
-  const createMusicVideo = async (e: FormEvent) => {
-    e.preventDefault();
-    const concept = [
-      mvSongName ? `Music video for "${mvSongName}".` : 'Untitled music video.',
-      mvDescription.trim(),
-      mvTitle ? `Title: ${mvTitle}.` : '',
-      mvAuthor ? `By: ${mvAuthor}.` : '',
-      'Create cinematic visuals synchronized to the music — emotive scenes, dynamic cuts, and stunning visual effects.',
-    ].filter(Boolean).join(' ');
-    setCreatingMv(true);
-    try {
-      const job = await postJson<VideoJob>(`${API}/api/video/create`, {
-        concept, durationSeconds: mvDuration, style: 'music video', resolution: '1080p', fps: 24,
-      });
-      setVideoJobs(prev => [job, ...prev]);
-      pollVideoJob(job.jobId);
-    } catch { alert('Failed to start Music Video creation. Is the backend running?'); }
-    finally { setCreatingMv(false); }
-  };
+  const stockAssets = useMemo<StockAsset[]>(() => [
+    {
+      id: 'city-night',
+      kind: 'video',
+      title: 'Neon City Atmosphere',
+      description: 'A ready-made scene concept for night driving shots, skyline reveals, and moody inserts.',
+      tags: ['Urban', 'Night', 'B-roll'],
+      artwork: makeArtwork('Neon City', 'Stock scene concept', '#1d4ed8', '#9333ea'),
+      actionLabel: 'Use in video prompt',
+      apply: () => { setTab('video'); setVideoQuickPrompt('Use neon city night driving visuals, glowing signage, reflections on wet pavement, and moody skyline reveals.'); },
+    },
+    {
+      id: 'portrait-film',
+      kind: 'image',
+      title: 'Film Portrait Starter',
+      description: 'A stock still direction for shallow depth-of-field portraits, fashion campaigns, and editorial covers.',
+      tags: ['Portrait', 'Film', 'Fashion'],
+      artwork: makeArtwork('Film Portrait', 'Image starter scene', '#c026d3', '#0f172a'),
+      actionLabel: 'Use in image prompt',
+      apply: () => { setTab('image'); setImageStyle('cinematic'); setImageAspect('3:2'); setImageRenderPrompt('A color film-inspired portrait of a stylish young creator looking to the side, shallow depth of field, fine grain, wide aperture, candid documentary mood.'); },
+    },
+    {
+      id: 'orchestral-rise',
+      kind: 'music',
+      title: 'Orchestral Rise Bed',
+      description: 'A music brief starter for emotional strings, hybrid percussion, and launch-ready crescendos.',
+      tags: ['Score', 'Epic', 'Trailer'],
+      artwork: makeArtwork('Orchestral Rise', 'Music brief starter', '#0f766e', '#14b8a6'),
+      actionLabel: 'Use in music prompt',
+      apply: () => { setTab('music'); setMusicSubTab('audio'); setMusicGenre('cinematic'); setMusicMood('uplifting'); setMusicDuration(45); setMusicConcept('Compose a premium orchestral rise with hybrid drums, emotional strings, and a confident studio launch energy.'); },
+    },
+    {
+      id: 'product-stage',
+      kind: 'video',
+      title: 'Stage Spotlight Intro',
+      description: 'Use for logo reveals, presenter openers, or premium hero moments with volumetric light.',
+      tags: ['Stage', 'Reveal', 'Spotlight'],
+      artwork: makeArtwork('Stage Intro', 'Presentation opener', '#f59e0b', '#ec4899'),
+      actionLabel: 'Apply spotlight opener',
+      apply: () => { setTab('video'); setVideoQuickPrompt('Open on a dark stage with a moving spotlight, floating dust particles, dramatic atmosphere, and a premium logo reveal.'); },
+    },
+  ], []);
 
-  const startQuickVideo = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!videoQuickPrompt.trim() && !videoConcept.trim()) return;
-    const concept = videoQuickPrompt.trim() || videoConcept.trim();
-    setCreatingVideo(true);
-    try {
-      const job = await postJson<VideoJob>(`${API}/api/video/create`, {
-        concept, durationSeconds: videoDuration, style: videoStyle, resolution: videoResolution, fps: videoFps,
-      });
-      setVideoJobs(prev => [job, ...prev]);
-      pollVideoJob(job.jobId);
-      setVideoQuickPrompt('');
-    } catch { alert('Failed to start video creation. Is the backend running?'); }
-    finally { setCreatingVideo(false); }
-  };
+  const imagePresets = useMemo<CreativeTemplate[]>(() => [
+    {
+      id: 'editorial-cover',
+      title: 'Editorial Cover',
+      description: 'High-contrast portrait direction with dramatic lighting and premium magazine composition.',
+      badge: 'Image preset',
+      tags: ['Portrait', 'Cover', '3:2'],
+      artwork: makeArtwork('Editorial Cover', 'Premium portrait treatment', '#7c3aed', '#0891b2'),
+      actionLabel: 'Use cover preset',
+      apply: () => { setTab('image'); setImageStyle('cinematic'); setImageAspect('3:2'); setImageRenderPrompt('A premium editorial portrait cover, dramatic side lighting, shallow depth of field, tactile film grain, refined wardrobe, luxury magazine aesthetic.'); },
+    },
+    {
+      id: 'product-keyart',
+      title: 'Product Key Art',
+      description: 'Stylized product hero imagery with gradient reflections, crisp focus, and launch-campaign polish.',
+      badge: 'Campaign art',
+      tags: ['Key Art', 'Product', '16:9'],
+      artwork: makeArtwork('Product Key Art', 'Launch campaign still', '#1d4ed8', '#06b6d4'),
+      actionLabel: 'Use product preset',
+      apply: () => { setTab('image'); setImageStyle('photorealistic'); setImageAspect('16:9'); setImageRenderPrompt('Create premium product key art for TrezzWorld Production Studio UI floating in a glossy dark environment with dramatic reflections and cinematic studio lighting.'); },
+    },
+    {
+      id: 'world-poster',
+      title: 'World Poster',
+      description: 'Epic fantasy poster composition for game worlds, film universes, and launch keyframes.',
+      badge: 'Poster art',
+      tags: ['Fantasy', 'Poster', 'Wide'],
+      artwork: makeArtwork('World Poster', 'Franchise keyframe', '#f97316', '#7c3aed'),
+      actionLabel: 'Use poster preset',
+      apply: () => { setTab('image'); setImageStyle('digital art'); setImageAspect('16:9'); setImageConcept('TrezzWorld Adventures universe poster with heroic cast, towering landscape, dramatic sky, glowing artifacts, and cinematic scale.'); },
+    },
+  ], []);
 
-  // ── Common section styles ──────────────────────────────────────────────────
-  const pageWrap: React.CSSProperties = { maxWidth: '1320px', margin: '0 auto', padding: '28px 32px', display: 'grid', gap: '20px' };
-  const sectionCard = (extra?: React.CSSProperties) => mkCard(T, extra);
-  const heroCard: React.CSSProperties = { ...mkCard(T), background: isDark ? 'linear-gradient(135deg,#14163a 0%,#1e1060 100%)' : 'linear-gradient(135deg,#ede9fe 0%,#ddd6fe 100%)', border: `1px solid ${T.borderAccent}` };
-  const H2: React.CSSProperties = { margin: '0 0 16px', fontSize: '16px', fontWeight: 700, color: T.text };
-  const listRow: React.CSSProperties = { padding: '12px 14px', background: isDark ? 'rgba(10,12,30,0.6)' : 'rgba(248,247,255,0.8)', borderRadius: '12px', border: `1px solid ${T.border}` };
-  const autoGrid: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px,1fr))', gap: '14px' };
+  const codePresets = useMemo<CreativeTemplate[]>(() => [
+    {
+      id: 'react-uploader',
+      title: 'Media Upload Panel',
+      description: 'Generate a polished uploader with drag-and-drop, validation, progress, and status chips.',
+      badge: 'UI starter',
+      tags: ['React', 'Uploader', 'Dashboard'],
+      artwork: makeArtwork('Media Upload', 'Frontend scaffold', '#0f766e', '#2563eb'),
+      actionLabel: 'Use code starter',
+      apply: () => { setTab('code'); setCodeLanguage('typescript'); setCodePrompt('Build a production-ready React + TypeScript media upload panel with drag-and-drop, file preview cards, progress indicators, error states, and cancel actions.'); },
+    },
+    {
+      id: 'python-pipeline',
+      title: 'Pipeline Worker',
+      description: 'Generate a Python worker that pulls jobs, updates progress, retries safely, and logs structured output.',
+      badge: 'Backend starter',
+      tags: ['Python', 'Workers', 'Queue'],
+      artwork: makeArtwork('Pipeline Worker', 'Backend service scaffold', '#7c3aed', '#22c55e'),
+      actionLabel: 'Use worker starter',
+      apply: () => { setTab('code'); setCodeLanguage('python'); setCodePrompt('Generate a Python async pipeline worker with retries, status updates, structured logging, and clean error handling for media generation jobs.'); },
+    },
+  ], []);
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  const pageTitle = NAV_ITEMS.find(item => item.id === tab)?.label ?? 'Studio';
+
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: T.bg, color: T.text, fontFamily: '"Inter", system-ui, sans-serif' }}>
-      <Sidebar tab={tab} setTab={setTab} T={T} isDark={isDark} onToggleDark={() => setIsDark(d => !d)} isOnline={isBackendUp} />
+    <div style={{ minHeight: '100vh', background: T.bgRadial, color: T.text }}>
+      <style>{SHELL_CSS}</style>
+      <div className="studio-shell">
+        <aside className="studio-sidebar studio-scroll" style={{ background: T.panelAlt, borderRight: `1px solid ${T.border}`, padding: 22 }}>
+          <div style={{ ...panelStyle(T, { padding: 18, marginBottom: 18, background: 'transparent', boxShadow: 'none' }) }}>
+            <div style={{ fontSize: 24, fontWeight: 900, letterSpacing: -1, marginBottom: 4 }}>TrezzWorld</div>
+            <div style={{ color: T.textMuted, fontSize: 13 }}>Production Studio</div>
+            <div style={{ marginTop: 18, padding: 16, borderRadius: 20, background: T.accentGradient, color: '#fff' }}>
+              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 1.2, textTransform: 'uppercase', opacity: 0.85 }}>Runway-style workspace</div>
+              <div style={{ fontSize: 20, fontWeight: 900, marginTop: 6 }}>All tabs, one polished shell.</div>
+              <div style={{ fontSize: 13, lineHeight: 1.6, marginTop: 8, opacity: 0.9 }}>Templates, stock starters, image rendering, music, code, and LUMI mission control together.</div>
+            </div>
+          </div>
 
-      {/* Main content area */}
-      <main style={{ marginLeft: '220px', flex: 1, minHeight: '100vh', overflowY: 'auto' }}>
-
-        {/* ── HOME / STUDIO ─────────────────────────────────────────── */}
-        {tab === 'home' && (
-          <div style={pageWrap}>
-            {/* Hero */}
-            <section style={heroCard}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-start' }}>
-                <div>
-                  <p style={{ margin: '0 0 6px', fontSize: '11px', fontWeight: 700, letterSpacing: '2px', color: T.accent, textTransform: 'uppercase' }}>LUMI Control Plane</p>
-                  <h1 style={{ margin: '0 0 10px', fontSize: '28px', fontWeight: 900, color: T.text }}>{controlPlane?.workspaceTitle ?? 'TrezzWorld Production Studio'}</h1>
-                  <p style={{ maxWidth: '740px', lineHeight: 1.65, color: T.textMuted, margin: 0, fontSize: '14px' }}>{controlPlane?.finishLine ?? 'A single prompt produces an end-to-end deliverable — music, video, images, code — with minimal human intervention.'}</p>
-                </div>
-                <div style={{ ...sectionCard(), background: isDark ? 'rgba(8,9,26,0.7)' : 'rgba(255,255,255,0.8)', minWidth: '160px', padding: '14px 18px' }}>
-                  <p style={{ margin: '0 0 4px', fontSize: '11px', color: T.textMuted }}>Studio</p>
-                  <strong style={{ color: isBackendUp ? T.green : T.red, fontSize: '14px' }}>{isBackendUp ? '✅ Online' : '⚠️ Offline'}</strong>
-                  {backendStatus && <p style={{ margin: '3px 0 0', fontSize: '11px', color: T.textSubtle }}>v{backendStatus.version}</p>}
-                </div>
-              </div>
-            </section>
-
-            {/* Stats row */}
-            <section style={autoGrid}>
-              {[
-                { label: 'Production Readiness', value: `${readiness}%`, sub: metaBuilderStatus?.summary ?? 'Analyzing…', icon: '📊' },
-                { label: 'Source Files', value: String(metaStatus?.repositoryIntelligence.sourceFiles ?? '—'), sub: `${metaStatus?.repositoryIntelligence.todoMarkers ?? 0} TODO markers`, icon: '📁' },
-                { label: 'Autonomy Score', value: `${metaBuilderStatus?.readinessEstimate ?? 0}%`, sub: 'LUMI self-build progress', icon: '🤖' },
-                { label: "Next ROI Move", value: '', sub: metaStatus?.highestRoiNextMove ?? 'Waiting for backend…', icon: '🚀' },
-              ].map(s => (
-                <div key={s.label} style={sectionCard()}>
-                  <p style={{ margin: '0 0 4px', fontSize: '12px', color: T.textMuted }}>{s.icon} {s.label}</p>
-                  {s.value !== '' && <h2 style={{ margin: '0 0 6px', fontSize: '24px', fontWeight: 800, color: T.text }}>{s.value}</h2>}
-                  <p style={{ margin: 0, color: T.textMuted, fontSize: '13px', lineHeight: 1.5 }}>{s.sub}</p>
-                </div>
-              ))}
-            </section>
-
-            {/* Mission launcher */}
-            <section style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '18px', alignItems: 'start' }}>
-              <div style={sectionCard()}>
-                <h2 style={H2}>🚀 Mission Launcher</h2>
-                <form onSubmit={bootMission} style={{ display: 'grid', gap: '14px' }}>
-                  <textarea value={missionPrompt} onChange={e => setMissionPrompt(e.target.value)} rows={5} style={mkTextarea(T)} placeholder={controlPlane?.missionPromptPlaceholder ?? 'Describe your mission…'} />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                    <p style={{ margin: 0, color: T.textMuted, fontSize: '13px' }}>
-                      {missionBoot ? `🚀 Mission ${missionBoot.missionId ?? ''} is ${missionBoot.status} via ${missionBoot.plannerModel ?? 'cascade'}.` : 'LUMI will plan and execute real pipeline tasks.'}
-                      {pipelineStatus?.status === 'running' && <span style={{ color: T.accentCyan }}> ⚡ {pipelineStatus.progress.completed}/{pipelineStatus.progress.total} jobs</span>}
-                    </p>
-                    <button type="submit" disabled={loadingMission} style={{ ...mkBtn(T, 'gradient', loadingMission), padding: '11px 22px', borderRadius: '10px' }}>
-                      {loadingMission ? 'Booting…' : 'Boot LUMI Mission'}
-                    </button>
+          <div className="studio-list" style={{ marginBottom: 18 }}>
+            {NAV_ITEMS.map(item => {
+              const active = item.id === tab;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setTab(item.id)}
+                  style={{
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '14px 16px',
+                    borderRadius: 18,
+                    border: `1px solid ${active ? T.borderStrong : T.border}`,
+                    background: active ? T.panelSoft : 'transparent',
+                    color: active ? T.text : T.textMuted,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                      <span style={{ fontSize: 18 }}>{item.icon}</span>
+                      <div>
+                        <div style={{ fontWeight: 800, fontSize: 14 }}>{item.label}</div>
+                        <div style={{ fontSize: 12, color: T.textSoft }}>{item.caption}</div>
+                      </div>
+                    </div>
+                    {active ? <span style={{ width: 10, height: 10, borderRadius: 999, background: T.accent2 }} /> : null}
                   </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ ...panelStyle(T, { padding: 16, marginBottom: 14, background: T.panelSoft, boxShadow: 'none' }) }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <span style={{ color: T.textMuted, fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 }}>Status</span>
+              <span style={badgeStyle(T, isBackendUp ? 'online' : 'offline')}>{isBackendUp ? 'Online' : 'Offline'}</span>
+            </div>
+            <div style={{ color: T.text, fontSize: 14, fontWeight: 700 }}>Production readiness {readiness}%</div>
+            <div style={{ color: T.textSoft, fontSize: 12, marginTop: 6 }}>{metaBuilderStatus?.summary ?? 'Waiting for backend status…'}</div>
+          </div>
+
+          <button onClick={() => setIsDark(value => !value)} style={{ ...buttonStyle(T, 'ghost'), width: '100%' }}>
+            {isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          </button>
+        </aside>
+
+        <main className="studio-main" style={{ padding: 24 }}>
+          <div style={{ ...panelStyle(T, { padding: 18, marginBottom: 18, display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center', flexWrap: 'wrap' }) }}>
+            <div>
+              <div style={{ fontSize: 12, color: T.textSoft, textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: 4 }}>studio.trezzhaus.com</div>
+              <div style={{ fontSize: 28, fontWeight: 900 }}>{pageTitle}</div>
+              <div style={{ fontSize: 14, color: T.textMuted, marginTop: 4 }}>{controlPlane?.finishLine ?? 'Build cinematic media, images, code, and campaigns from one premium dashboard.'}</div>
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button onClick={() => { setTab('video'); setVideoQuickPrompt('Create a cinematic product teaser for TrezzWorld Production Studio.'); }} style={buttonStyle(T, 'secondary')}>Quick teaser</button>
+              <button onClick={() => setTab('settings')} style={buttonStyle(T, 'ghost')}>Providers</button>
+            </div>
+          </div>
+
+          {tab === 'home' && (
+            <div style={{ display: 'grid', gap: 18 }}>
+              <section className="studio-grid-4">
+                <MetricCard T={T} label="Readiness" value={`${readiness}%`} hint={metaStatus?.highestRoiNextMove ?? 'Backend will surface the next highest-ROI move here.'} />
+                <MetricCard T={T} label="Source files" value={`${metaStatus?.repositoryIntelligence.sourceFiles ?? '—'}`} hint={`${metaStatus?.repositoryIntelligence.todoMarkers ?? 0} TODO markers detected`} />
+                <MetricCard T={T} label="Autonomy" value={`${metaBuilderStatus?.readinessEstimate ?? 0}%`} hint={metaBuilderStatus?.summary ?? 'Awaiting meta-builder summary'} />
+                <MetricCard T={T} label="Delivery surfaces" value={`${controlPlane?.deliverySurfaces.length ?? 0}`} hint='Studio, web, campaigns, video, music, and deployment surfaces' />
+              </section>
+
+              <section className="studio-grid-2">
+                <div style={panelStyle(T, { padding: 24, background: T.accentGradient, color: '#fff' })}>
+                  <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 1.1, textTransform: 'uppercase', opacity: 0.85 }}>Mission launcher</div>
+                  <h1 style={{ fontSize: 34, lineHeight: 1.05, margin: '10px 0 12px' }}>{controlPlane?.workspaceTitle ?? 'TrezzWorld Production Studio'}</h1>
+                  <p style={{ margin: '0 0 18px', maxWidth: 740, lineHeight: 1.7, fontSize: 14, opacity: 0.94 }}>Launch a single prompt that coordinates assets, media, code, and campaigns. This shell now surfaces templates and stock starters instead of leaving the workspace empty.</p>
+                  <form onSubmit={bootMission} style={{ display: 'grid', gap: 14 }}>
+                    <textarea value={missionPrompt} onChange={event => setMissionPrompt(event.target.value)} rows={5} style={{ ...inputStyle(T, { background: 'rgba(0,0,0,0.16)', color: '#fff', border: '1px solid rgba(255,255,255,0.2)' }) }} placeholder={controlPlane?.missionPromptPlaceholder ?? 'Describe your mission'} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: 13, opacity: 0.9 }}>{missionBoot ? `${missionBoot.status} · ${missionBoot.plannerModel ?? 'cascade planner'}${missionBoot.missionId ? ` · ${missionBoot.missionId}` : ''}` : 'Mission planning will populate the execution queue and next actions.'}</div>
+                      <button type="submit" disabled={loadingMission} style={buttonStyle(T, 'ghost', loadingMission)}>{loadingMission ? 'Booting…' : 'Boot LUMI mission'}</button>
+                    </div>
+                  </form>
                   {pipelineStatus && (
-                    <div>
+                    <div style={{ marginTop: 16 }}>
                       <ProgressBar pct={pipelinePct} status={pipelineStatus.status} T={T} />
-                      <p style={{ ...mkHint(T), marginTop: '5px' }}>{pipelineStatus.progress.completed} done · {pipelineStatus.progress.running} running · {pipelineStatus.progress.errored} errors</p>
+                      <div style={{ marginTop: 8, fontSize: 12, opacity: 0.88 }}>{pipelineStatus.progress.completed} completed · {pipelineStatus.progress.running} running · {pipelineStatus.progress.errored} errors</div>
                     </div>
                   )}
-                </form>
-              </div>
-              <div style={{ ...sectionCard(), minWidth: '220px' }}>
-                <h2 style={H2}>Delivery Surfaces</h2>
-                <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: '8px' }}>
-                  {(controlPlane?.deliverySurfaces ?? []).map(s => (
-                    <li key={s.name} style={listRow}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <strong style={{ fontSize: '13px', color: T.text }}>{s.name}</strong>
-                        <span style={pill(s.status, T)}>{s.status}</span>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </section>
+                </div>
 
-            {/* Modules + Queue + Readiness */}
-            <section style={autoGrid}>
-              <div style={sectionCard()}>
-                <h2 style={H2}>Workspace Modules</h2>
-                <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: '8px' }}>
-                  {(controlPlane?.workspaceModules ?? []).map(m => (
-                    <li key={m.id} style={listRow}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <strong style={{ fontSize: '13px', color: T.text }}>{m.name}</strong>
-                        <span style={pill(m.status, T)}>{m.status}</span>
-                      </div>
-                      <p style={{ margin: '5px 0 0', color: T.textMuted, fontSize: '12px' }}>{m.description}</p>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div style={sectionCard()}>
-                <h2 style={H2}>Execution Queue</h2>
-                <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: '8px' }}>
-                  {activeQueue.map(j => (
-                    <li key={j.jobId ?? j.actionId} style={listRow}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <strong style={{ fontSize: '13px', color: T.text }}>{j.name}</strong>
-                        <span style={pill(j.status, T)}>{j.status}</span>
-                      </div>
-                      <p style={{ margin: '4px 0 0', color: T.textMuted, fontSize: '12px' }}>{j.workerId} · {j.stage}{j.score != null ? ` · score ${j.score.toFixed(2)}` : ''}</p>
-                      {j.error && <p style={{ margin: '3px 0 0', fontSize: '12px', color: T.red }}>{j.error}</p>}
-                    </li>
-                  ))}
-                  {activeQueue.length === 0 && <p style={{ color: T.textSubtle, fontSize: '13px', margin: 0 }}>No jobs queued. Launch a mission to start.</p>}
-                </ul>
-              </div>
-              <div style={sectionCard()}>
-                <h2 style={H2}>Readiness Checks</h2>
-                <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: '8px' }}>
-                  {(metaStatus?.productionReadiness.checks ?? []).map(c => (
-                    <li key={c.category} style={listRow}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <strong style={{ fontSize: '13px', color: T.text }}>{c.category}</strong>
-                        <span style={pill(c.passed ? 'ready' : 'planned', T)}>{c.passed ? '✓ passed' : 'pending'}</span>
-                      </div>
-                      <p style={{ margin: '3px 0 0', color: T.textMuted, fontSize: '12px' }}>{c.goal}</p>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </section>
-          </div>
-        )}
-
-        {/* ── MUSIC STUDIO ──────────────────────────────────────────── */}
-        {tab === 'music' && (
-          <div style={{ display: 'flex', height: 'calc(100vh - 0px)', overflow: 'hidden' }}>
-
-            {/* LEFT: Creation panel */}
-            <div style={{ width: '460px', minWidth: '360px', maxWidth: '500px', borderRight: `1px solid ${T.border}`, overflowY: 'auto', padding: '24px 24px 40px', display: 'flex', flexDirection: 'column', gap: '0' }}>
-
-              {/* Sub-nav */}
-              <div style={{ display: 'flex', gap: '4px', background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', borderRadius: '10px', padding: '4px', marginBottom: '22px' }}>
-                {(['musicvideo', 'audio'] as MusicSubTab[]).map(s => (
-                  <button key={s} onClick={() => setMusicSubTab(s)} style={{ flex: 1, padding: '8px 12px', borderRadius: '8px', background: musicSubTab === s ? T.accentGrad : 'transparent', color: musicSubTab === s ? '#fff' : T.textMuted, border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: 600, transition: 'all 0.15s' }}>
-                    {s === 'musicvideo' ? '🎬 Music Video' : '🎧 Audio Only'}
-                  </button>
-                ))}
-              </div>
-
-              {/* ── MUSIC VIDEO CREATOR (Sondo-inspired) ── */}
-              {musicSubTab === 'musicvideo' && (
-                <form onSubmit={createMusicVideo} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-
-                  {/* Choose a Song */}
-                  <div style={{ background: isDark ? 'rgba(124,58,237,0.08)' : 'rgba(124,58,237,0.05)', border: `1px solid ${T.borderAccent}`, borderRadius: '14px', padding: '16px' }}>
-                    <h3 style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: 700, color: T.accent }}>Choose a song</h3>
-                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                      <input value={mvSongName} onChange={e => setMvSongName(e.target.value)} placeholder="Type song name / artist…" style={{ ...mkInput(T), flex: 1 }} />
-                      <label style={{ background: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)', border: `1px solid ${T.border}`, borderRadius: '10px', padding: '10px 14px', cursor: 'pointer', fontSize: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', color: T.textMuted, flexShrink: 0, lineHeight: 1 }}>
-                        <span style={{ fontSize: '18px' }}>⬆</span>
-                        <span>Upload</span>
-                        <input type="file" accept="audio/*,video/*" style={{ display: 'none' }} onChange={e => { if (e.target.files?.[0]) setMvSongName(e.target.files[0].name); }} />
-                      </label>
+                <div style={{ display: 'grid', gap: 18 }}>
+                  <div style={panelStyle(T, { padding: 20 })}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                      <h2 style={sectionTitleStyle(T)}>Delivery surfaces</h2>
+                      <span style={badgeStyle(T, `${controlPlane?.deliverySurfaces.length ?? 0}`)}>{controlPlane?.deliverySurfaces.length ?? 0}</span>
                     </div>
-                  </div>
-
-                  {/* Upload Photos */}
-                  <div style={{ background: isDark ? 'rgba(124,58,237,0.08)' : 'rgba(124,58,237,0.05)', border: `1px solid ${T.borderAccent}`, borderRadius: '14px', padding: '16px' }}>
-                    <h3 style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: 700, color: T.accent }}>Upload photos</h3>
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                      {mvPhotos.map((p, i) => (
-                        <div key={i} style={{ width: '54px', height: '54px', borderRadius: '8px', overflow: 'hidden', position: 'relative', flexShrink: 0 }}>
-                          <img src={p} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                          <button type="button" onClick={() => setMvPhotos(prev => prev.filter((_, idx) => idx !== i))} style={{ position: 'absolute', top: '2px', right: '2px', background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%', width: '16px', height: '16px', cursor: 'pointer', color: '#fff', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>×</button>
+                    <div className="studio-list">
+                      {(controlPlane?.deliverySurfaces ?? []).map(surface => (
+                        <div key={surface.name} style={{ ...panelStyle(T, { padding: 14, background: T.panelSoft, boxShadow: 'none' }) }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                            <strong style={{ color: T.text }}>{surface.name}</strong>
+                            <span style={badgeStyle(T, surface.status)}>{surface.status}</span>
+                          </div>
                         </div>
                       ))}
-                      <label style={{ width: '54px', height: '54px', borderRadius: '8px', border: `2px dashed ${T.border}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: T.textMuted, fontSize: '10px', gap: '2px', flexShrink: 0 }}>
-                        <span style={{ fontSize: '16px' }}>📁</span>
-                        <span>Album</span>
-                        <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={e => {
-                          if (e.target.files) {
-                            Array.from(e.target.files).forEach(file => {
-                              const reader = new FileReader();
-                              reader.onload = ev => setMvPhotos(prev => [...prev, ev.target!.result as string]);
-                              reader.readAsDataURL(file);
-                            });
-                          }
-                        }} />
-                      </label>
-                      {mvPhotos.length > 0 && (
-                        <button type="button" onClick={() => setMvPhotos([])} style={{ fontSize: '11px', color: T.textSubtle, background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>Clear all</button>
-                      )}
                     </div>
                   </div>
-
-                  {/* MV Description */}
-                  <div style={{ background: isDark ? 'rgba(124,58,237,0.08)' : 'rgba(124,58,237,0.05)', border: `1px solid ${T.borderAccent}`, borderRadius: '14px', padding: '16px' }}>
-                    <h3 style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: 700, color: T.accent }}>Music Video Description</h3>
-                    <textarea value={mvDescription} onChange={e => setMvDescription(e.target.value.slice(0, 2000))} rows={5} style={{ ...mkTextarea(T), resize: 'none' }} placeholder="Please describe the desired emotions, plot, or visuals for the Music Video. If left blank, AI will create based on your song." />
-                    <p style={{ margin: '4px 0 0', fontSize: '11px', color: T.textSubtle, textAlign: 'right' }}>{mvDescription.length} / 2000</p>
+                  <div style={panelStyle(T, { padding: 20 })}>
+                    <h2 style={sectionTitleStyle(T)}>Execution queue</h2>
+                    <div style={{ marginTop: 14 }}><QueueList T={T} items={activeQueue} /></div>
                   </div>
+                </div>
+              </section>
 
-                  {/* Options */}
-                  <details style={{ background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)', border: `1px solid ${T.border}`, borderRadius: '14px', overflow: 'hidden' }}>
-                    <summary style={{ padding: '14px 16px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', color: T.text, display: 'flex', justifyContent: 'space-between', alignItems: 'center', listStyle: 'none', userSelect: 'none' }}>
-                      <span>Options</span>
-                      <span style={{ color: T.textSubtle }}>▾</span>
-                    </summary>
-                    <div style={{ padding: '0 16px 16px', display: 'grid', gap: '12px' }}>
-                      <div>
-                        <label style={mkLabel(T)}>
-                          Music Video Title
-                          <span style={{ float: 'right', fontWeight: 400 }}>{mvTitle.length}/30</span>
-                        </label>
-                        <input value={mvTitle} onChange={e => setMvTitle(e.target.value.slice(0, 30))} placeholder="Enter video title" style={mkInput(T)} />
+              <section>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+                  <div>
+                    <h2 style={sectionTitleStyle(T)}>Creative starter packs</h2>
+                    <div style={{ color: T.textMuted, fontSize: 13, marginTop: 4 }}>Curated templates and stock starter directions wired into the tabs you already have.</div>
+                  </div>
+                </div>
+                <div className="studio-grid-4">
+                  {videoTemplates.map(template => <TemplateCard key={template.id} T={T} template={template} />)}
+                </div>
+              </section>
+
+              <section className="studio-grid-2">
+                <div style={panelStyle(T, { padding: 20 })}>
+                  <h2 style={sectionTitleStyle(T)}>Workspace modules</h2>
+                  <div className="studio-list" style={{ marginTop: 14 }}>
+                    {(controlPlane?.workspaceModules ?? []).map(module => (
+                      <div key={module.id} style={{ ...panelStyle(T, { padding: 14, background: T.panelSoft, boxShadow: 'none' }) }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                          <strong style={{ color: T.text }}>{module.name}</strong>
+                          <span style={badgeStyle(T, module.status)}>{module.status}</span>
+                        </div>
+                        <div style={{ color: T.textMuted, fontSize: 13, lineHeight: 1.6, marginTop: 6 }}>{module.description}</div>
                       </div>
-                      <div>
-                        <label style={mkLabel(T)}>
-                          Author's Name
-                          <span style={{ float: 'right', fontWeight: 400 }}>{mvAuthor.length}/30</span>
-                        </label>
-                        <input value={mvAuthor} onChange={e => setMvAuthor(e.target.value.slice(0, 30))} placeholder="Enter author name" style={mkInput(T)} />
+                    ))}
+                  </div>
+                </div>
+                <div style={panelStyle(T, { padding: 20 })}>
+                  <h2 style={sectionTitleStyle(T)}>Capability providers</h2>
+                  <div className="studio-list" style={{ marginTop: 14 }}>
+                    {(controlPlane?.capabilityProviders ?? []).map(provider => (
+                      <div key={`${provider.capability}-${provider.providerId}`} style={{ ...panelStyle(T, { padding: 14, background: T.panelSoft, boxShadow: 'none' }) }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                          <strong style={{ color: T.text }}>{provider.capability}</strong>
+                          <span style={badgeStyle(T, provider.status)}>{provider.status}</span>
+                        </div>
+                        <div style={{ color: T.textMuted, fontSize: 12, marginTop: 8 }}>{provider.providerId} · {provider.providerKind} · {provider.route}</div>
                       </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            </div>
+          )}
+
+          {tab === 'video' && (
+            <div style={{ display: 'grid', gap: 18 }}>
+              <section className="studio-grid-2">
+                <div style={panelStyle(T, { padding: 24, background: T.panelAlt })}>
+                  <div style={{ color: T.accent2, fontWeight: 800, fontSize: 12, letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 10 }}>Runway-inspired video composer</div>
+                  <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.05 }}>Beautiful AI video workflows without the empty screen.</h1>
+                  <p style={{ color: T.textMuted, fontSize: 14, lineHeight: 1.7, margin: '12px 0 18px' }}>This tab now leads with templates, a stock starter library, quick prompts, and the full advanced controls already wired to your backend video API.</p>
+                  <form onSubmit={startQuickVideo} style={{ display: 'grid', gap: 14 }}>
+                    <textarea value={videoQuickPrompt} onChange={event => setVideoQuickPrompt(event.target.value)} rows={4} style={inputStyle(T)} placeholder='Describe the video you want, paste a script, or start from one of the templates below…' />
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                      {['Create a luxury fashion trailer.', 'Turn product screenshots into a feature teaser.', 'Cut a Roblox world trailer with end slate.', 'Build a cinematic social ad in 9:16.'].map(prompt => (
+                        <button key={prompt} type="button" onClick={() => { setVideoQuickPrompt(prompt); setVideoConcept(prompt); }} style={buttonStyle(T, 'ghost')}>{prompt}</button>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <button type="submit" disabled={creatingVideo || (!videoQuickPrompt.trim() && !videoConcept.trim())} style={buttonStyle(T, 'primary', creatingVideo || (!videoQuickPrompt.trim() && !videoConcept.trim()))}>{creatingVideo ? 'Starting…' : 'Generate video'}</button>
+                      <span style={{ color: T.textSoft, fontSize: 13 }}>Uses <strong style={{ color: T.text }}>{videoStyle}</strong> · {videoResolution} · {videoFps}fps</span>
+                    </div>
+                  </form>
+                </div>
+
+                <div style={{ display: 'grid', gap: 18 }}>
+                  <div style={panelStyle(T, { padding: 16 })}>
+                    <img src={makeArtwork('Video Workspace', 'Templates + stock starters', '#4f46e5', '#06b6d4')} alt="Video workspace preview" style={{ width: '100%', borderRadius: 20, border: `1px solid ${T.border}` }} />
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10, marginTop: 14 }}>
+                      <div style={{ ...panelStyle(T, { padding: 12, background: T.panelSoft, boxShadow: 'none' }) }}>
+                        <div style={{ color: T.textSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>Templates</div>
+                        <div style={{ color: T.text, fontSize: 20, fontWeight: 900 }}>{videoTemplates.length}</div>
+                      </div>
+                      <div style={{ ...panelStyle(T, { padding: 12, background: T.panelSoft, boxShadow: 'none' }) }}>
+                        <div style={{ color: T.textSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>Stock starters</div>
+                        <div style={{ color: T.text, fontSize: 20, fontWeight: 900 }}>{stockAssets.filter(item => item.kind === 'video').length}</div>
+                      </div>
+                      <div style={{ ...panelStyle(T, { padding: 12, background: T.panelSoft, boxShadow: 'none' }) }}>
+                        <div style={{ color: T.textSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>Recent jobs</div>
+                        <div style={{ color: T.text, fontSize: 20, fontWeight: 900 }}>{videoJobs.length}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={panelStyle(T, { padding: 18 })}>
+                    <h2 style={sectionTitleStyle(T)}>Provider-backed presets</h2>
+                    <div style={{ color: T.textMuted, fontSize: 13, marginTop: 6 }}>Quickly fill the form and start the existing backend pipeline.</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 14 }}>
+                      <button onClick={() => { setVideoStyle('cinematic'); setVideoDuration(30); setVideoResolution('1080p'); }} style={buttonStyle(T, 'secondary')}>Cinematic</button>
+                      <button onClick={() => { setVideoStyle('documentary'); setVideoDuration(45); }} style={buttonStyle(T, 'secondary')}>Documentary</button>
+                      <button onClick={() => { setVideoStyle('animated'); setVideoResolution('vertical'); }} style={buttonStyle(T, 'secondary')}>Vertical social</button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+                  <div>
+                    <h2 style={sectionTitleStyle(T)}>Templates</h2>
+                    <div style={{ color: T.textMuted, fontSize: 13, marginTop: 4 }}>Closer to the reference layout: visual cards first, controls second.</div>
+                  </div>
+                </div>
+                <div className="studio-grid-4">
+                  {videoTemplates.map(template => <TemplateCard key={template.id} T={T} template={template} />)}
+                </div>
+              </section>
+
+              <section>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+                  <div>
+                    <h2 style={sectionTitleStyle(T)}>Stock starters</h2>
+                    <div style={{ color: T.textMuted, fontSize: 13, marginTop: 4 }}>Open-source style starter directions for clips, keyframes, and atmosphere references.</div>
+                  </div>
+                </div>
+                <div className="studio-grid-4">
+                  {stockAssets.map(asset => <AssetCard key={asset.id} T={T} asset={asset} />)}
+                </div>
+              </section>
+
+              <section className="studio-grid-2">
+                <div style={panelStyle(T, { padding: 22 })}>
+                  <h2 style={sectionTitleStyle(T)}>Advanced video controls</h2>
+                  <form onSubmit={startVideoCreation} style={{ display: 'grid', gap: 14, marginTop: 14 }}>
+                    <textarea value={videoConcept} onChange={event => setVideoConcept(event.target.value)} rows={5} style={inputStyle(T)} placeholder='Describe your cinematic sequence, product teaser, trailer, or feature tour…' />
+                    <div className="studio-grid-3">
                       <div>
-                        <label style={mkLabel(T)}>Visual Style</label>
-                        <select value={mvStyle} onChange={e => setMvStyle(e.target.value)} style={mkSelect(T)}>
-                          <option value="music video">Music Video (standard)</option>
-                          <option value="cinematic">Cinematic</option>
-                          <option value="animated">Animated</option>
-                          <option value="lo-fi aesthetic">Lo-fi Aesthetic</option>
-                          <option value="epic fantasy">Epic Fantasy</option>
-                          <option value="documentary">Documentary Style</option>
+                        <label style={{ display: 'block', color: T.textMuted, fontSize: 12, marginBottom: 8 }}>Style</label>
+                        <select value={videoStyle} onChange={event => setVideoStyle(event.target.value)} style={inputStyle(T)}>
+                          {VIDEO_STYLE_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
                         </select>
                       </div>
                       <div>
-                        <label style={mkLabel(T)}>Duration: {fmtDur(mvDuration)}</label>
-                        <input type="range" min={15} max={300} step={15} value={mvDuration} onChange={e => setMvDuration(Number(e.target.value))} style={{ width: '100%', accentColor: T.accent }} />
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: T.textSubtle }}><span>15s</span><span>2:30</span><span>5 min</span></div>
+                        <label style={{ display: 'block', color: T.textMuted, fontSize: 12, marginBottom: 8 }}>Resolution</label>
+                        <select value={videoResolution} onChange={event => setVideoResolution(event.target.value)} style={inputStyle(T)}>
+                          <option value="1080p">1080p</option>
+                          <option value="720p">720p</option>
+                          <option value="4k">4K</option>
+                          <option value="vertical">Vertical</option>
+                          <option value="square">Square</option>
+                        </select>
                       </div>
-                    </div>
-                  </details>
-
-                  {/* Generate button */}
-                  <button type="submit" disabled={creatingMv} style={{ background: creatingMv ? (isDark ? '#1e1040' : '#e5e0f5') : T.accentGrad, color: creatingMv ? T.textSubtle : '#fff', border: 'none', borderRadius: '999px', padding: '15px 28px', fontSize: '15px', fontWeight: 700, cursor: creatingMv ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginTop: '4px' }}>
-                    <span>{creatingMv ? '⏳ Generating Music Video…' : '🎬 Generate Script'}</span>
-                    {!creatingMv && <span style={{ fontSize: '12px', background: 'rgba(255,255,255,0.2)', borderRadius: '20px', padding: '3px 10px' }}>+ AI Credits</span>}
-                  </button>
-                </form>
-              )}
-
-              {/* ── AUDIO ONLY ── */}
-              {musicSubTab === 'audio' && (
-                <form onSubmit={startMusicCreation} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                  <div>
-                    <h2 style={H2}>🎧 Generate Real Audio</h2>
-                    <label style={mkLabel(T)}>Concept / Brief</label>
-                    <textarea value={musicConcept} onChange={e => setMusicConcept(e.target.value)} rows={4} style={mkTextarea(T)} placeholder="e.g. Epic orchestral theme for TrezzWorld Adventures — heroic, full brass, driving percussion, cinematic" />
-                  </div>
-                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                    <div>
-                      <label style={mkLabel(T)}>Genre</label>
-                      <select value={musicGenre} onChange={e => setMusicGenre(e.target.value)} style={mkSelect(T)}>
-                        <option value="cinematic">Cinematic / Orchestral</option>
-                        <option value="hip-hop">Hip-Hop / Trap</option>
-                        <option value="electronic">Electronic / EDM</option>
-                        <option value="lo-fi">Lo-Fi / Chill</option>
-                        <option value="rock">Rock / Metal</option>
-                        <option value="jazz">Jazz / Soul</option>
-                        <option value="pop">Pop</option>
-                        <option value="ambient">Ambient / Atmospheric</option>
-                        <option value="game ost">Game OST</option>
-                        <option value="r&b">R&B</option>
-                      </select>
+                      <div>
+                        <label style={{ display: 'block', color: T.textMuted, fontSize: 12, marginBottom: 8 }}>Frame rate</label>
+                        <select value={videoFps} onChange={event => setVideoFps(Number(event.target.value))} style={inputStyle(T)}>
+                          <option value={24}>24 fps</option>
+                          <option value={30}>30 fps</option>
+                          <option value={60}>60 fps</option>
+                        </select>
+                      </div>
                     </div>
                     <div>
-                      <label style={mkLabel(T)}>Mood</label>
-                      <select value={musicMood} onChange={e => setMusicMood(e.target.value)} style={mkSelect(T)}>
-                        <option value="epic">Epic</option>
-                        <option value="emotional">Emotional</option>
-                        <option value="energetic">Energetic</option>
-                        <option value="dark">Dark / Tense</option>
-                        <option value="uplifting">Uplifting</option>
-                        <option value="melancholic">Melancholic</option>
-                        <option value="mysterious">Mysterious</option>
-                        <option value="chill">Chill / Relaxed</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label style={mkLabel(T)}>BPM</label>
-                      <input type="number" min={60} max={200} value={musicBpm} onChange={e => setMusicBpm(Number(e.target.value))} style={{ ...mkInput(T), width: '80px' }} />
-                    </div>
-                  </div>
-                  <div>
-                    <label style={mkLabel(T)}>Duration: {musicDuration}s {musicDuration >= 60 ? `(${(musicDuration/60).toFixed(1)}min)` : ''}</label>
-                    <input type="range" min={5} max={60} step={5} value={musicDuration} onChange={e => setMusicDuration(Number(e.target.value))} style={{ width: '100%', accentColor: T.accent }} />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: T.textSubtle }}><span>5s</span><span>30s</span><span>60s</span></div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                    <button type="submit" disabled={creatingMusicJob || !musicConcept.trim()} style={{ ...mkBtn(T, 'gradient', creatingMusicJob || !musicConcept.trim()), borderRadius: '999px', padding: '12px 24px' }}>
-                      {creatingMusicJob ? '⏳ Starting…' : '🎧 Generate Real Audio'}
-                    </button>
-                    <button type="button" disabled={generatingMusic || !musicConcept.trim()} onClick={generateMusic} style={{ ...mkBtn(T, 'secondary', generatingMusic || !musicConcept.trim()), borderRadius: '999px', padding: '12px 20px' }}>
-                      {generatingMusic ? '📝 Writing…' : '📝 Brief Only'}
-                    </button>
-                  </div>
-                  {musicResult && (
-                    <div style={sectionCard({ marginTop: '8px' })}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                        <strong style={{ fontSize: '14px', color: T.text }}>🎼 Production Brief</strong>
-                        <button onClick={() => { const el = document.createElement('a'); el.href = URL.createObjectURL(new Blob([musicResult], {type:'text/plain'})); el.download = 'music-brief.txt'; el.click(); }} style={{ ...mkBtn(T, 'secondary'), fontSize: '11px', padding: '5px 10px' }}>⬇ Download</button>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <span style={{ color: T.textMuted, fontSize: 12 }}>Duration</span>
+                        <span style={{ color: T.text, fontWeight: 700 }}>{fmtDur(videoDuration)}</span>
                       </div>
-                      <pre style={{ whiteSpace: 'pre-wrap', fontFamily: '"Inter", system-ui, sans-serif', fontSize: '12px', lineHeight: 1.7, margin: 0, color: T.textMuted, maxHeight: '240px', overflowY: 'auto' }}>{musicResult}</pre>
+                      <input type="range" min={5} max={180} step={5} value={videoDuration} onChange={event => setVideoDuration(Number(event.target.value))} style={{ width: '100%', accentColor: T.accent }} />
                     </div>
-                  )}
-                </form>
-              )}
-            </div>
-
-            {/* RIGHT: Project Gallery */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '24px 28px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '22px' }}>
-                <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 800, color: T.text }}>
-                  {musicSubTab === 'musicvideo' ? 'Trending MVs' : 'Audio Projects'}
-                </h2>
-                {musicSubTab === 'musicvideo' && mvJobs.length > 0 && (
-                  <button onClick={() => setTab('video')} style={{ ...mkBtn(T, 'secondary'), fontSize: '12px', padding: '6px 14px' }}>View All →</button>
-                )}
-              </div>
-
-              {musicSubTab === 'musicvideo' && (
-                <>
-                  {mvJobs.length === 0 ? (
-                    <div style={{ display: 'grid', gap: '16px' }}>
-                      <div style={{ ...sectionCard(), textAlign: 'center', padding: '48px 32px' }}>
-                        <div style={{ fontSize: '48px', marginBottom: '16px' }}>🎬</div>
-                        <h3 style={{ margin: '0 0 8px', fontSize: '18px', color: T.text }}>No Music Videos Yet</h3>
-                        <p style={{ color: T.textMuted, margin: '0 0 20px', fontSize: '14px' }}>Fill out the form to generate your first AI music video.</p>
-                      </div>
-                      {/* Example/demo cards */}
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px,1fr))', gap: '14px', opacity: 0.5 }}>
-                        {['Beat Drop', 'Pop Spark', 'Goal Rush', 'Resilience'].map(title => (
-                          <div key={title} style={{ ...sectionCard({ padding: '0', overflow: 'hidden' }) }}>
-                            <div style={{ height: '120px', background: T.accentGrad, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '32px' }}>🎵</div>
-                            <div style={{ padding: '12px' }}>
-                              <strong style={{ fontSize: '13px', color: T.text }}>{title}</strong>
-                              <p style={{ margin: '3px 0 0', fontSize: '11px', color: T.textSubtle }}>TrezzWorld AI</p>
-                            </div>
+                    <button type="submit" disabled={creatingVideo || !videoConcept.trim()} style={buttonStyle(T, 'primary', creatingVideo || !videoConcept.trim())}>{creatingVideo ? 'Starting…' : 'Create full project'}</button>
+                  </form>
+                </div>
+                <div style={panelStyle(T, { padding: 22 })}>
+                  <h2 style={sectionTitleStyle(T)}>Recent video projects</h2>
+                  <div className="studio-list" style={{ marginTop: 14 }}>
+                    {videoJobs.length === 0 && <div style={{ color: T.textSoft, fontSize: 13 }}>No projects yet. Use a template above or enter a concept.</div>}
+                    {videoJobs.map(job => (
+                      <div key={job.jobId} style={{ ...panelStyle(T, { padding: 14, background: T.panelSoft, boxShadow: 'none' }) }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'start' }}>
+                          <div>
+                            <strong style={{ color: T.text, display: 'block' }}>{truncate(job.concept, 90)}</strong>
+                            <div style={{ color: T.textSoft, fontSize: 12, marginTop: 4 }}>{fmtDur(job.durationSeconds)} · {job.style} · {job.resolution} · {job.fps}fps</div>
                           </div>
-                        ))}
+                          <span style={badgeStyle(T, job.status)}>{job.status}</span>
+                        </div>
+                        <div style={{ marginTop: 12 }}><ProgressBar pct={job.progress} status={job.status} T={T} /></div>
+                        <div style={{ color: T.textMuted, fontSize: 12, marginTop: 8 }}>{job.message || 'Queued in video pipeline'}</div>
+                        {job.downloadReady && <button onClick={() => { const anchor = document.createElement('a'); anchor.href = `${API}/api/video/${job.jobId}/download`; anchor.download = `trezzworld-video-${job.jobId.slice(0, 8)}.mp4`; anchor.click(); }} style={{ ...buttonStyle(T, 'secondary'), marginTop: 12 }}>Download MP4</button>}
+                        {job.storyboard?.scenes?.length ? <div style={{ color: T.textSoft, fontSize: 12, marginTop: 8 }}>{job.storyboard.scenes.length} storyboard scenes ready</div> : null}
                       </div>
-                    </div>
-                  ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px,1fr))', gap: '16px' }}>
-                      {mvJobs.map(job => (
-                        <div key={job.jobId} style={{ ...sectionCard({ padding: '0', overflow: 'hidden' }) }}>
-                          <div style={{ height: '140px', background: T.accentGrad, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-                            <span style={{ fontSize: '40px' }}>🎬</span>
-                            <div style={{ position: 'absolute', top: '8px', right: '8px' }}><span style={pill(job.status, T)}>{job.status}</span></div>
-                          </div>
-                          <div style={{ padding: '14px' }}>
-                            <strong style={{ fontSize: '13px', color: T.text, display: 'block', marginBottom: '4px' }}>{(job.storyboard?.title ?? job.concept).slice(0, 40)}{job.concept.length > 40 ? '…' : ''}</strong>
-                            <p style={{ margin: '0 0 8px', fontSize: '11px', color: T.textSubtle }}>{fmtDur(job.durationSeconds)} · {job.style}</p>
-                            <ProgressBar pct={job.progress} status={job.status} T={T} />
-                            {job.downloadReady && (
-                              <button onClick={() => { const a = document.createElement('a'); a.href = `${API}/api/video/${job.jobId}/download`; a.download = `mv-${job.jobId.slice(0,8)}.mp4`; a.click(); }} style={{ ...mkBtn(T, 'gradient'), fontSize: '11px', padding: '6px 12px', marginTop: '8px', width: '100%', borderRadius: '8px' }}>⬇ Download MP4</button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-
-              {musicSubTab === 'audio' && (
-                <div style={{ display: 'grid', gap: '14px' }}>
-                  {musicJobs.length === 0 ? (
-                    <div style={{ ...sectionCard(), textAlign: 'center', padding: '48px 32px' }}>
-                      <div style={{ fontSize: '48px', marginBottom: '16px' }}>🎧</div>
-                      <p style={{ color: T.textMuted, margin: 0 }}>No audio projects yet. Enter a concept and click Generate.</p>
-                    </div>
-                  ) : musicJobs.map(job => (
-                    <div key={job.jobId} style={sectionCard({ padding: '16px' })}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
-                        <div>
-                          <strong style={{ fontSize: '14px', color: T.text }}>{job.concept.slice(0, 60)}{job.concept.length > 60 ? '…' : ''}</strong>
-                          <p style={{ margin: '2px 0 0', fontSize: '12px', color: T.textSubtle }}>{job.genre} · {job.bpm}bpm · {job.mood} · {job.durationSeconds}s{job.outputFormat ? ` · ${job.outputFormat.toUpperCase()}` : ''}</p>
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                          <span style={pill(job.status, T)}>{job.status}</span>
-                          {job.downloadReady && (
-                            <button onClick={() => { const a = document.createElement('a'); a.href = `${API}/api/music/${job.jobId}/download`; a.download = `audio-${job.jobId.slice(0,8)}.${job.outputFormat ?? 'wav'}`; a.click(); }} style={{ ...mkBtn(T, 'gradient'), padding: '6px 14px', fontSize: '12px' }}>⬇ Download</button>
-                          )}
-                        </div>
-                      </div>
-                      <ProgressBar pct={job.progress} status={job.status} T={T} />
-                      <p style={{ ...mkHint(T), marginTop: '5px' }}>{job.message}</p>
-                      {job.error && <p style={{ margin: '4px 0 0', fontSize: '12px', color: T.red }}>⚠️ {job.error}</p>}
-                      {job.downloadReady && job.outputFormat !== 'txt' && (
-                        <audio controls style={{ width: '100%', marginTop: '10px', height: '36px' }} src={`${API}/api/music/${job.jobId}/download`}>Your browser does not support audio.</audio>
-                      )}
-                      {job.compositionBrief && (
-                        <details style={{ marginTop: '10px' }}>
-                          <summary style={{ fontSize: '12px', color: T.textSubtle, cursor: 'pointer' }}>📄 View Production Brief</summary>
-                          <pre style={{ fontSize: '11px', color: T.textMuted, marginTop: '8px', overflowY: 'auto', maxHeight: '180px', background: isDark ? '#06101e' : '#f3f0ff', padding: '10px', borderRadius: '8px', whiteSpace: 'pre-wrap' }}>{job.compositionBrief}</pre>
-                        </details>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ── VIDEO EDITOR (Descript-inspired) ──────────────────────── */}
-        {tab === 'video' && (
-          <div style={pageWrap}>
-
-            {/* Hero — "What can I help you with?" */}
-            <section style={{ ...sectionCard(), background: isDark ? 'linear-gradient(135deg,#0f0e2a 0%,#1a1060 100%)' : 'linear-gradient(135deg,#f0edff 0%,#e8e2ff 100%)', border: `1px solid ${T.borderAccent}`, padding: '36px' }}>
-              <div style={{ textAlign: 'center', maxWidth: '680px', margin: '0 auto' }}>
-                <div style={{ fontSize: '36px', marginBottom: '12px' }}>🎬</div>
-                <h1 style={{ margin: '0 0 8px', fontSize: '26px', fontWeight: 800, color: T.text }}>What can I help you with?</h1>
-                <p style={{ margin: '0 0 24px', color: T.textMuted, fontSize: '14px' }}>Upload a file or describe what you want to make, and AI will help you plan it.</p>
-
-                <form onSubmit={startQuickVideo} style={{ position: 'relative' }}>
-                  <div style={{ display: 'flex', gap: '0', background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.9)', border: `1px solid ${T.borderAccent}`, borderRadius: '14px', overflow: 'hidden', alignItems: 'center', padding: '4px 4px 4px 16px' }}>
-                    <span style={{ color: T.textSubtle, fontSize: '18px', marginRight: '8px' }}>📎</span>
-                    <input value={videoQuickPrompt} onChange={e => setVideoQuickPrompt(e.target.value)} placeholder="Upload a file or describe what you want to make…" style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: T.text, fontSize: '14px', padding: '10px 0' }} />
-                    <button type="submit" disabled={creatingVideo || (!videoQuickPrompt.trim() && !videoConcept.trim())} style={{ ...mkBtn(T, 'gradient', creatingVideo || (!videoQuickPrompt.trim() && !videoConcept.trim())), borderRadius: '10px', padding: '10px 20px', flexShrink: 0 }}>
-                      {creatingVideo ? '⏳ Starting…' : 'Get started'}
-                    </button>
+                    ))}
                   </div>
-                </form>
-
-                {/* Quick action chips */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', marginTop: '16px' }}>
-                  {[
-                    { label: '🎵 Create music video', concept: 'Create a cinematic music video' },
-                    { label: '🎭 Generate with avatar', concept: 'Generate a video with an AI avatar presenter' },
-                    { label: '🎙 Rough cut from audio', concept: 'Create a rough cut from audio transcript' },
-                    { label: '📱 Create social clips', concept: 'Create short social media clips' },
-                    { label: '🌍 Translate & dub', concept: 'Translate and dub video into another language' },
-                    { label: '🖼 Turn slides into video', concept: 'Convert presentation slides into a video' },
-                    { label: '✨ Generate animated', concept: 'Generate an animated explainer video' },
-                    { label: '🎨 Browse templates…', concept: '' },
-                  ].map(chip => (
-                    <button key={chip.label} onClick={() => { if (chip.concept) { setVideoQuickPrompt(chip.concept); setVideoConcept(chip.concept); } }} style={{ background: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)', color: T.textMuted, border: `1px solid ${T.border}`, borderRadius: '999px', padding: '7px 14px', fontSize: '12px', cursor: 'pointer', fontWeight: 500 }}>
-                      {chip.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </section>
-
-            {/* Popular features */}
-            <section>
-              <h2 style={{ ...H2, marginBottom: '14px' }}>Popular features</h2>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px,1fr))', gap: '16px' }}>
-                {[
-                  { icon: '🎥', title: 'AI video maker', desc: 'Watch AI make your video with voiceover and visuals', action: 'Make a video about…', tab: 'video' as Tab },
-                  { icon: '🎵', title: 'Music Video Creator', desc: 'Generate a music video from your song and photos', action: 'Create music video →', tab: 'music' as Tab },
-                  { icon: '🎙', title: 'Record & Edit', desc: 'Record, transcribe, and edit with text-based editing', action: 'Start recording', tab: 'video' as Tab },
-                ].map(feat => (
-                  <div key={feat.title} style={{ ...sectionCard(), cursor: 'pointer', display: 'flex', gap: '16px', alignItems: 'flex-start', transition: 'border-color 0.15s', borderColor: T.borderAccent }} onClick={() => setTab(feat.tab)}>
-                    <div style={{ fontSize: '28px', flexShrink: 0 }}>{feat.icon}</div>
-                    <div style={{ flex: 1 }}>
-                      <strong style={{ fontSize: '15px', color: T.text, display: 'block', marginBottom: '4px' }}>{feat.title}</strong>
-                      <p style={{ margin: '0 0 10px', fontSize: '13px', color: T.textMuted, lineHeight: 1.5 }}>{feat.desc}</p>
-                      <span style={{ fontSize: '12px', color: T.accent, fontWeight: 600 }}>{feat.action}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            {/* Advanced creation form */}
-            <section style={sectionCard()}>
-              <h2 style={H2}>🎥 New Video Project</h2>
-              <form onSubmit={startVideoCreation} style={{ display: 'grid', gap: '16px' }}>
-                <div>
-                  <label style={mkLabel(T)}>Concept / Script Prompt</label>
-                  <textarea value={videoConcept} onChange={e => setVideoConcept(e.target.value)} rows={4} style={mkTextarea(T)} placeholder="Describe your video: 'A cinematic intro for TrezzWorld Adventures — showing the world map, key characters, epic battles, and ending with the logo reveal.'" />
-                </div>
-                <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                  <div style={{ flex: 1, minWidth: '200px' }}>
-                    <label style={mkLabel(T)}>Duration: {fmtDur(videoDuration)} {videoDuration > 60 ? `(${(videoDuration/60).toFixed(1)} min)` : ''}</label>
-                    <input type="range" min={5} max={600} step={5} value={videoDuration} onChange={e => setVideoDuration(Number(e.target.value))} style={{ width: '100%', accentColor: T.accent }} />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: T.textSubtle }}><span>5s</span><span>5 min</span><span>10 min</span></div>
-                  </div>
-                  <div>
-                    <label style={mkLabel(T)}>Style</label>
-                    <select value={videoStyle} onChange={e => setVideoStyle(e.target.value)} style={mkSelect(T)}>
-                      <option value="cinematic">Cinematic</option>
-                      <option value="documentary">Documentary</option>
-                      <option value="music video">Music Video</option>
-                      <option value="game trailer">Game Trailer</option>
-                      <option value="corporate">Corporate</option>
-                      <option value="animated">Animated</option>
-                      <option value="lo-fi aesthetic">Lo-fi Aesthetic</option>
-                      <option value="epic fantasy">Epic Fantasy</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={mkLabel(T)}>Resolution</label>
-                    <select value={videoResolution} onChange={e => setVideoResolution(e.target.value)} style={mkSelect(T)}>
-                      <option value="1080p">1080p (1920×1080)</option>
-                      <option value="720p">720p (1280×720)</option>
-                      <option value="4k">4K (3840×2160)</option>
-                      <option value="vertical">Vertical (1080×1920)</option>
-                      <option value="square">Square (1080×1080)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={mkLabel(T)}>FPS</label>
-                    <select value={videoFps} onChange={e => setVideoFps(Number(e.target.value))} style={mkSelect(T)}>
-                      <option value={24}>24 fps (cinematic)</option>
-                      <option value={30}>30 fps (standard)</option>
-                      <option value={60}>60 fps (smooth)</option>
-                    </select>
-                  </div>
-                </div>
-                <button type="submit" disabled={creatingVideo || !videoConcept.trim()} style={{ ...mkBtn(T, 'gradient', creatingVideo || !videoConcept.trim()), padding: '13px 28px', fontSize: '15px', borderRadius: '12px', alignSelf: 'start' }}>
-                  {creatingVideo ? '⏳ Starting…' : '🎬 Create Video'}
-                </button>
-              </form>
-            </section>
-
-            {/* Video projects */}
-            {videoJobs.length > 0 && (
-              <section style={sectionCard()}>
-                <h2 style={H2}>Recent Projects</h2>
-                <div style={{ display: 'grid', gap: '14px' }}>
-                  {videoJobs.map(job => (
-                    <div key={job.jobId} style={{ ...listRow, padding: '16px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
-                        <div>
-                          <strong style={{ fontSize: '14px', color: T.text }}>{job.concept.slice(0, 80)}{job.concept.length > 80 ? '…' : ''}</strong>
-                          <p style={{ margin: '2px 0 0', fontSize: '12px', color: T.textSubtle }}>{fmtDur(job.durationSeconds)} · {job.style} · {job.resolution} · {job.fps}fps · ID: {job.jobId.slice(0,8)}</p>
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                          <span style={pill(job.status, T)}>{job.status}</span>
-                          {job.downloadReady && (
-                            <button onClick={() => { const a = document.createElement('a'); a.href = `${API}/api/video/${job.jobId}/download`; a.download = `trezzworld-video-${job.jobId.slice(0,8)}.mp4`; a.click(); }} style={{ ...mkBtn(T, 'gradient'), padding: '6px 14px', fontSize: '12px' }}>⬇ Download MP4</button>
-                          )}
-                        </div>
-                      </div>
-                      <ProgressBar pct={job.progress} status={job.status} T={T} />
-                      <p style={{ ...mkHint(T), marginTop: '5px' }}>{job.message || job.status}</p>
-                      {job.error && <p style={{ margin: '4px 0 0', fontSize: '12px', color: T.red }}>⚠️ {job.error}</p>}
-                      {job.storyboard?.scenes && job.storyboard.scenes.length > 0 && (
-                        <details style={{ marginTop: '10px' }}>
-                          <summary style={{ fontSize: '12px', color: T.textSubtle, cursor: 'pointer' }}>View storyboard ({job.storyboard.scenes.length} scenes)</summary>
-                          <pre style={{ fontSize: '11px', color: T.textMuted, marginTop: '8px', overflowY: 'auto', maxHeight: '200px', background: isDark ? '#06101e' : '#f3f0ff', padding: '10px', borderRadius: '8px' }}>{JSON.stringify(job.storyboard, null, 2)}</pre>
-                        </details>
-                      )}
-                    </div>
-                  ))}
                 </div>
               </section>
-            )}
-          </div>
-        )}
+            </div>
+          )}
 
-        {/* ── IMAGE GENERATOR ───────────────────────────────────────── */}
-        {tab === 'image' && (
-          <div style={pageWrap}>
-            <section style={heroCard}>
-              <h1 style={{ margin: '0 0 6px', fontSize: '22px', fontWeight: 800, color: T.text }}>🖼 Image Generator</h1>
-              <p style={{ margin: 0, color: T.textMuted, fontSize: '14px' }}>Generate photographic images via AI, and engineer prompts for Midjourney, DALL-E, Firefly.</p>
-            </section>
-
-            {/* Render real image */}
-            <section style={sectionCard()}>
-              <h2 style={H2}>📸 Render Real Image</h2>
-              <form onSubmit={renderRealImage} style={{ display: 'grid', gap: '14px' }}>
-                <div>
-                  <label style={mkLabel(T)}>Image Prompt</label>
-                  <textarea value={imageRenderPrompt} onChange={e => setImageRenderPrompt(e.target.value)} rows={3} style={mkTextarea(T)} placeholder="e.g. TrezzWorld Adventures hero character standing on a cliff at golden hour, cinematic lighting, 8K detail, photorealistic" />
-                </div>
-                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                  <div>
-                    <label style={mkLabel(T)}>Style</label>
-                    <select value={imageStyle} onChange={e => setImageStyle(e.target.value)} style={mkSelect(T)}>
-                      <option value="photorealistic">Photorealistic</option>
-                      <option value="cinematic">Cinematic Film Still</option>
-                      <option value="digital art">Digital Art / Concept Art</option>
-                      <option value="anime">Anime / Manga</option>
-                      <option value="3d render">3D Render / CGI</option>
-                      <option value="oil painting">Oil Painting</option>
-                      <option value="watercolor">Watercolor</option>
-                      <option value="comic book">Comic Book</option>
-                      <option value="pixel art">Pixel Art</option>
-                    </select>
+          {tab === 'music' && (
+            <div style={{ display: 'grid', gap: 18 }}>
+              <section className="studio-grid-2">
+                <div style={panelStyle(T, { padding: 24 })}>
+                  <div style={{ display: 'flex', gap: 10, marginBottom: 18 }}>
+                    <button onClick={() => setMusicSubTab('musicvideo')} style={buttonStyle(T, musicSubTab === 'musicvideo' ? 'primary' : 'ghost')}>Music video</button>
+                    <button onClick={() => setMusicSubTab('audio')} style={buttonStyle(T, musicSubTab === 'audio' ? 'primary' : 'ghost')}>Audio only</button>
                   </div>
-                  <button type="submit" disabled={renderingImage || !imageRenderPrompt.trim()} style={{ ...mkBtn(T, 'gradient', renderingImage || !imageRenderPrompt.trim()), padding: '12px 22px', fontSize: '14px', borderRadius: '10px' }}>
-                    {renderingImage ? '🖼 Generating…' : '📸 Render Image'}
-                  </button>
-                </div>
-              </form>
-              {imageRenderResult && (
-                <div style={{ marginTop: '16px' }}>
-                  {imageRenderResult.ok && imageRenderResult.imageBase64 ? (
-                    <div>
-                      <p style={{ ...mkHint(T), marginBottom: '10px' }}>✅ {imageRenderResult.message}</p>
-                      <img src={`data:image/${imageRenderResult.format ?? 'png'};base64,${imageRenderResult.imageBase64}`} alt="AI generated" style={{ width: '100%', maxWidth: '800px', borderRadius: '12px', border: `1px solid ${T.borderAccent}` }} />
-                      <div style={{ marginTop: '10px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        <button onClick={() => { const a = document.createElement('a'); a.href = `data:image/${imageRenderResult.format};base64,${imageRenderResult.imageBase64}`; a.download = `trezzworld-render.${imageRenderResult.format}`; a.click(); }} style={{ ...mkBtn(T, 'secondary'), fontSize: '12px', padding: '6px 14px' }}>⬇ Download</button>
+
+                  {musicSubTab === 'musicvideo' ? (
+                    <form onSubmit={createMusicVideo} style={{ display: 'grid', gap: 14 }}>
+                      <input value={mvSongName} onChange={event => setMvSongName(event.target.value)} style={inputStyle(T)} placeholder='Song name or uploaded source' />
+                      <textarea value={mvDescription} onChange={event => setMvDescription(event.target.value.slice(0, 2000))} rows={5} style={inputStyle(T)} placeholder='Describe the emotion, art direction, performance energy, and visual story for the video…' />
+                      <div className="studio-grid-3">
+                        <input value={mvTitle} onChange={event => setMvTitle(event.target.value.slice(0, 30))} style={inputStyle(T)} placeholder='Video title' />
+                        <input value={mvAuthor} onChange={event => setMvAuthor(event.target.value.slice(0, 30))} style={inputStyle(T)} placeholder='Artist / author' />
+                        <select value={mvStyle} onChange={event => setMvStyle(event.target.value)} style={inputStyle(T)}>
+                          <option value="music video">Music video</option>
+                          <option value="cinematic">Cinematic</option>
+                          <option value="animated">Animated</option>
+                          <option value="lo-fi aesthetic">Lo-fi aesthetic</option>
+                          <option value="epic fantasy">Epic fantasy</option>
+                          <option value="documentary">Documentary</option>
+                        </select>
                       </div>
-                    </div>
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', color: T.textMuted, fontSize: 12, marginBottom: 8 }}>
+                          <span>Music video duration</span>
+                          <span style={{ color: T.text, fontWeight: 700 }}>{fmtDur(mvDuration)}</span>
+                        </div>
+                        <input type="range" min={15} max={240} step={5} value={mvDuration} onChange={event => setMvDuration(Number(event.target.value))} style={{ width: '100%', accentColor: T.accent }} />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', color: T.textMuted, fontSize: 12, marginBottom: 10 }}>Reference stills</label>
+                        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                          {mvPhotos.map((photo, index) => (
+                            <div key={`${photo}-${index}`} style={{ position: 'relative' }}>
+                              <img src={photo} alt={`Reference ${index + 1}`} style={{ width: 72, height: 72, borderRadius: 16, objectFit: 'cover', border: `1px solid ${T.border}` }} />
+                              <button type="button" onClick={() => setMvPhotos(prev => prev.filter((_, current) => current !== index))} style={{ position: 'absolute', top: -6, right: -6, width: 22, height: 22, borderRadius: 999, border: 'none', background: T.danger, color: '#fff', cursor: 'pointer' }}>×</button>
+                            </div>
+                          ))}
+                          <label style={{ ...panelStyle(T, { width: 72, height: 72, display: 'grid', placeItems: 'center', cursor: 'pointer', background: T.panelSoft, boxShadow: 'none' }) }}>
+                            <span style={{ color: T.textMuted, fontSize: 12, textAlign: 'center' }}>Add
+photos</span>
+                            <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={event => {
+                              if (!event.target.files) return;
+                              Array.from(event.target.files).forEach(file => {
+                                const reader = new FileReader();
+                                reader.onload = loadEvent => setMvPhotos(prev => [...prev, loadEvent.target?.result as string]);
+                                reader.readAsDataURL(file);
+                              });
+                            }} />
+                          </label>
+                        </div>
+                      </div>
+                      <button type="submit" disabled={creatingMv} style={buttonStyle(T, 'primary', creatingMv)}>{creatingMv ? 'Starting…' : 'Create music video'}</button>
+                    </form>
                   ) : (
-                    <div style={{ ...sectionCard(), background: isDark ? 'rgba(239,68,68,0.08)' : 'rgba(239,68,68,0.05)', border: `1px solid rgba(239,68,68,0.2)`, marginTop: '12px' }}>
-                      <p style={{ margin: 0, fontSize: '13px', color: T.red }}>{imageRenderResult.message}</p>
-                      <p style={{ margin: '6px 0 0', fontSize: '12px', color: T.textMuted }}>Use the Prompt Engineer below for Midjourney, DALL-E 3, or Adobe Firefly.</p>
+                    <form onSubmit={startMusicCreation} style={{ display: 'grid', gap: 14 }}>
+                      <textarea value={musicConcept} onChange={event => setMusicConcept(event.target.value)} rows={5} style={inputStyle(T)} placeholder='Describe the track: vibe, instrumentation, tempo, mix references, and where it will be used…' />
+                      <div className="studio-grid-3">
+                        <select value={musicGenre} onChange={event => setMusicGenre(event.target.value)} style={inputStyle(T)}>
+                          <option value="cinematic">Cinematic</option>
+                          <option value="hip hop">Hip hop</option>
+                          <option value="electronic">Electronic</option>
+                          <option value="ambient">Ambient</option>
+                          <option value="orchestral">Orchestral</option>
+                          <option value="pop">Pop</option>
+                        </select>
+                        <input value={musicMood} onChange={event => setMusicMood(event.target.value)} style={inputStyle(T)} placeholder='Mood (epic, moody, uplifting…)'/>
+                        <input type="number" value={musicBpm} onChange={event => setMusicBpm(Number(event.target.value))} style={inputStyle(T)} min={60} max={200} />
+                      </div>
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', color: T.textMuted, fontSize: 12, marginBottom: 8 }}>
+                          <span>Track length</span>
+                          <span style={{ color: T.text, fontWeight: 700 }}>{fmtDur(musicDuration)}</span>
+                        </div>
+                        <input type="range" min={10} max={180} step={5} value={musicDuration} onChange={event => setMusicDuration(Number(event.target.value))} style={{ width: '100%', accentColor: T.accent }} />
+                      </div>
+                      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                        <button type="submit" disabled={creatingMusicJob || !musicConcept.trim()} style={buttonStyle(T, 'primary', creatingMusicJob || !musicConcept.trim())}>{creatingMusicJob ? 'Starting…' : 'Generate real audio'}</button>
+                        <button type="button" onClick={(event) => { void generateMusic(event as unknown as FormEvent); }} disabled={generatingMusic || !musicConcept.trim()} style={buttonStyle(T, 'secondary', generatingMusic || !musicConcept.trim())}>{generatingMusic ? 'Writing brief…' : 'Write composition brief'}</button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+
+                <div style={{ display: 'grid', gap: 18 }}>
+                  <div style={panelStyle(T, { padding: 18 })}>
+                    <img src={makeArtwork('Music Studio', 'Album visuals + audio generation', '#db2777', '#2563eb')} alt="Music workspace preview" style={{ width: '100%', borderRadius: 18, border: `1px solid ${T.border}` }} />
+                    <div style={{ color: T.textMuted, fontSize: 13, lineHeight: 1.6, marginTop: 12 }}>Use this tab for audio-only generation or full music-video concepts with uploaded stills and styling.</div>
+                  </div>
+                  <div style={panelStyle(T, { padding: 18 })}>
+                    <h2 style={sectionTitleStyle(T)}>Starter packs</h2>
+                    <div className="studio-list" style={{ marginTop: 14 }}>
+                      {videoTemplates.filter(template => template.badge !== 'Featured template').slice(0, 3).map(template => <TemplateCard key={template.id} T={T} template={template} />)}
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="studio-grid-2">
+                <div style={panelStyle(T, { padding: 20 })}>
+                  <h2 style={sectionTitleStyle(T)}>Recent music jobs</h2>
+                  <div className="studio-list" style={{ marginTop: 14 }}>
+                    {musicJobs.length === 0 && <div style={{ color: T.textSoft, fontSize: 13 }}>No music jobs yet. Start from the audio form or use a stock starter.</div>}
+                    {musicJobs.map(job => (
+                      <div key={job.jobId} style={{ ...panelStyle(T, { padding: 14, background: T.panelSoft, boxShadow: 'none' }) }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'start' }}>
+                          <div>
+                            <strong style={{ color: T.text }}>{truncate(job.concept, 88)}</strong>
+                            <div style={{ color: T.textSoft, fontSize: 12, marginTop: 4 }}>{job.genre} · {fmtDur(job.durationSeconds)} · {job.provider}</div>
+                          </div>
+                          <span style={badgeStyle(T, job.status)}>{job.status}</span>
+                        </div>
+                        <div style={{ marginTop: 12 }}><ProgressBar pct={job.progress} status={job.status} T={T} /></div>
+                        <div style={{ color: T.textMuted, fontSize: 12, marginTop: 8 }}>{job.message || job.compositionBrief}</div>
+                        {job.downloadReady && <button onClick={() => { const anchor = document.createElement('a'); anchor.href = `${API}/api/music/${job.jobId}/download`; anchor.download = `trezzworld-audio-${job.jobId.slice(0, 8)}.${job.outputFormat ?? 'wav'}`; anchor.click(); }} style={{ ...buttonStyle(T, 'secondary'), marginTop: 12 }}>Download audio</button>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div style={panelStyle(T, { padding: 20 })}>
+                  <h2 style={sectionTitleStyle(T)}>Composition brief output</h2>
+                  <div style={{ ...panelStyle(T, { padding: 16, background: T.panelSoft, boxShadow: 'none', marginTop: 14, minHeight: 240 }) }}>
+                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'inherit', color: musicResult ? T.text : T.textSoft, lineHeight: 1.7 }}>{musicResult || 'Generate a brief from the audio form to see lyrics, arrangement, and production direction here.'}</pre>
+                  </div>
+                  {mvJobs.length > 0 && <div style={{ color: T.textMuted, fontSize: 12, marginTop: 12 }}>{mvJobs.length} music-video styled jobs also appear in the Video tab.</div>}
+                </div>
+              </section>
+            </div>
+          )}
+
+          {tab === 'image' && (
+            <div style={{ display: 'grid', gap: 18 }}>
+              <section className="studio-grid-2">
+                <div style={panelStyle(T, { padding: 22 })}>
+                  <div style={{ color: T.accent2, fontWeight: 800, fontSize: 12, letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 10 }}>Render real images</div>
+                  <h1 style={{ margin: 0, fontSize: 32 }}>Premium visuals with presets, prompt engineering, and direct provider rendering.</h1>
+                  <p style={{ color: T.textMuted, fontSize: 14, lineHeight: 1.7, margin: '12px 0 18px' }}>Image rendering now lives in a richer workspace with poster presets, stock starters, and better art direction surfaces.</p>
+                  <form onSubmit={renderRealImage} style={{ display: 'grid', gap: 14 }}>
+                    <textarea value={imageRenderPrompt} onChange={event => setImageRenderPrompt(event.target.value)} rows={5} style={inputStyle(T)} placeholder='Describe the exact still you want to generate…' />
+                    <div className="studio-grid-3">
+                      <select value={imageStyle} onChange={event => setImageStyle(event.target.value)} style={inputStyle(T)}>
+                        {IMAGE_STYLE_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
+                      </select>
+                      <select value={imageAspect} onChange={event => setImageAspect(event.target.value)} style={inputStyle(T)}>
+                        <option value="16:9">16:9</option>
+                        <option value="3:2">3:2</option>
+                        <option value="1:1">1:1</option>
+                        <option value="9:16">9:16</option>
+                        <option value="4:3">4:3</option>
+                      </select>
+                      <button type="submit" disabled={renderingImage || !imageRenderPrompt.trim()} style={buttonStyle(T, 'primary', renderingImage || !imageRenderPrompt.trim())}>{renderingImage ? 'Rendering…' : 'Render image'}</button>
+                    </div>
+                  </form>
+                </div>
+                <div style={panelStyle(T, { padding: 18, display: 'grid', alignContent: 'start', gap: 14 })}>
+                  {imageRenderResult?.ok && imageRenderResult.imageBase64 ? (
+                    <>
+                      <img src={`data:image/${imageRenderResult.format ?? 'png'};base64,${imageRenderResult.imageBase64}`} alt="Generated output" style={{ width: '100%', borderRadius: 18, border: `1px solid ${T.border}` }} />
+                      <div style={{ color: T.textMuted, fontSize: 13 }}>{imageRenderResult.message}</div>
+                      <button onClick={() => { const anchor = document.createElement('a'); anchor.href = `data:image/${imageRenderResult.format};base64,${imageRenderResult.imageBase64}`; anchor.download = `trezzworld-render.${imageRenderResult.format}`; anchor.click(); }} style={buttonStyle(T, 'secondary')}>Download image</button>
+                    </>
+                  ) : (
+                    <>
+                      <img src={makeArtwork('Image Render', 'Preview canvas', '#4f46e5', '#ec4899')} alt="Image preview placeholder" style={{ width: '100%', borderRadius: 18, border: `1px solid ${T.border}` }} />
+                      <div style={{ color: imageRenderResult ? T.danger : T.textMuted, fontSize: 13 }}>{imageRenderResult?.message ?? 'Rendered output will appear here with download controls and provider details.'}</div>
+                    </>
+                  )}
+                </div>
+              </section>
+
+              <section>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+                  <div>
+                    <h2 style={sectionTitleStyle(T)}>Poster and keyframe presets</h2>
+                    <div style={{ color: T.textMuted, fontSize: 13, marginTop: 4 }}>Starter looks for studio campaigns, characters, products, and world-building.</div>
+                  </div>
+                </div>
+                <div className="studio-grid-3">
+                  {imagePresets.map(template => <TemplateCard key={template.id} T={T} template={template} />)}
+                </div>
+              </section>
+
+              <section className="studio-grid-2">
+                <div style={panelStyle(T, { padding: 20 })}>
+                  <h2 style={sectionTitleStyle(T)}>Prompt engineer</h2>
+                  <form onSubmit={generateImage} style={{ display: 'grid', gap: 14, marginTop: 14 }}>
+                    <textarea value={imageConcept} onChange={event => setImageConcept(event.target.value)} rows={4} style={inputStyle(T)} placeholder='Need prompt packs for Midjourney, Firefly, DALL-E, or Stable Diffusion? Describe the asset here…' />
+                    <div className="studio-grid-3">
+                      <select value={imageAspect} onChange={event => setImageAspect(event.target.value)} style={inputStyle(T)}>
+                        <option value="16:9">16:9</option>
+                        <option value="1:1">1:1</option>
+                        <option value="9:16">9:16</option>
+                        <option value="4:3">4:3</option>
+                        <option value="3:2">3:2</option>
+                        <option value="21:9">21:9</option>
+                      </select>
+                      <select value={imageCount} onChange={event => setImageCount(Number(event.target.value))} style={inputStyle(T)}>
+                        <option value={1}>1 variation</option>
+                        <option value={2}>2 variations</option>
+                        <option value={4}>4 variations</option>
+                        <option value={6}>6 variations</option>
+                        <option value={8}>8 variations</option>
+                      </select>
+                      <button type="submit" disabled={generatingImage || !imageConcept.trim()} style={buttonStyle(T, 'secondary', generatingImage || !imageConcept.trim())}>{generatingImage ? 'Writing prompts…' : 'Generate prompts'}</button>
+                    </div>
+                  </form>
+                  {imageResult && (
+                    <div style={{ ...panelStyle(T, { padding: 16, background: T.panelSoft, boxShadow: 'none', marginTop: 14 }) }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+                        <strong style={{ color: T.text }}>Generated prompt pack</strong>
+                        <button onClick={() => downloadTextFile(imageResult, 'image-prompts.txt')} style={buttonStyle(T, 'ghost')}>Download</button>
+                      </div>
+                      <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'inherit', color: T.textMuted, lineHeight: 1.7 }}>{imageResult}</pre>
                     </div>
                   )}
                 </div>
-              )}
-            </section>
+                <div style={panelStyle(T, { padding: 20 })}>
+                  <h2 style={sectionTitleStyle(T)}>Stock direction library</h2>
+                  <div className="studio-list" style={{ marginTop: 14 }}>
+                    {stockAssets.filter(asset => asset.kind !== 'music').map(asset => <AssetCard key={asset.id} T={T} asset={asset} />)}
+                  </div>
+                </div>
+              </section>
+            </div>
+          )}
 
-            {/* Prompt engineer */}
-            <section style={sectionCard()}>
-              <h2 style={H2}>🎨 Prompt Engineer (Midjourney / DALL-E / Firefly)</h2>
-              <form onSubmit={generateImage} style={{ display: 'grid', gap: '16px' }}>
-                <div>
-                  <label style={mkLabel(T)}>Concept</label>
-                  <textarea value={imageConcept} onChange={e => setImageConcept(e.target.value)} rows={3} style={mkTextarea(T)} placeholder="e.g. TrezzWorld Adventures game poster — epic fantasy landscape with characters, golden hour lighting, dramatic sky" />
-                </div>
-                <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
+          {tab === 'chat' && (
+            <div className="studio-grid-2">
+              <div style={panelStyle(T, { padding: 22 })}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
                   <div>
-                    <label style={mkLabel(T)}>Aspect Ratio</label>
-                    <select value={imageAspect} onChange={e => setImageAspect(e.target.value)} style={mkSelect(T)}>
-                      <option value="16:9">16:9 — Landscape</option>
-                      <option value="1:1">1:1 — Square</option>
-                      <option value="9:16">9:16 — Vertical</option>
-                      <option value="4:3">4:3 — Standard</option>
-                      <option value="3:2">3:2 — Photo</option>
-                      <option value="21:9">21:9 — Ultrawide</option>
-                    </select>
+                    <h1 style={{ margin: 0, fontSize: 28 }}>LUMI copilot</h1>
+                    <div style={{ color: T.textMuted, fontSize: 13, marginTop: 4 }}>Creative direction, pipeline planning, prompts, and production support.</div>
                   </div>
-                  <div>
-                    <label style={mkLabel(T)}>Variations</label>
-                    <select value={imageCount} onChange={e => setImageCount(Number(e.target.value))} style={mkSelect(T)}>
-                      <option value={1}>1</option>
-                      <option value={2}>2</option>
-                      <option value={4}>4</option>
-                      <option value={6}>6</option>
-                      <option value={8}>8</option>
-                    </select>
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <button onClick={() => setUseOllama(false)} style={buttonStyle(T, useOllama ? 'ghost' : 'primary')}>Cloud</button>
+                    <button onClick={() => setUseOllama(true)} style={buttonStyle(T, useOllama ? 'primary' : 'ghost')}>Local{isOllamaUp ? '' : ' offline'}</button>
                   </div>
                 </div>
-                <button type="submit" disabled={generatingImage || !imageConcept.trim()} style={{ ...mkBtn(T, 'secondary', generatingImage || !imageConcept.trim()), padding: '12px 24px', fontSize: '14px', borderRadius: '10px', alignSelf: 'start' }}>
-                  {generatingImage ? '🖼 Engineering prompts…' : '🖼 Generate Image Prompts'}
-                </button>
-              </form>
-              {imageResult && (
-                <div style={{ marginTop: '18px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                    <strong style={{ fontSize: '14px', color: T.text }}>🎨 Generated Prompts</strong>
-                    <button onClick={() => { const el = document.createElement('a'); el.href = URL.createObjectURL(new Blob([imageResult], {type:'text/plain'})); el.download = 'image-prompts.txt'; el.click(); }} style={{ ...mkBtn(T, 'secondary'), fontSize: '11px', padding: '5px 10px' }}>⬇ Download</button>
-                  </div>
-                  <pre style={{ whiteSpace: 'pre-wrap', fontFamily: '"Inter", system-ui, sans-serif', fontSize: '13px', lineHeight: 1.7, margin: 0, color: T.textMuted, maxHeight: '500px', overflowY: 'auto', background: isDark ? '#06101e' : '#f8f6ff', padding: '16px', borderRadius: '10px' }}>{imageResult}</pre>
-                  <p style={{ ...mkHint(T), marginTop: '10px' }}>Copy each prompt into Stable Diffusion, Midjourney, DALL-E 3, Adobe Firefly, or use the Render button above.</p>
-                </div>
-              )}
-            </section>
-          </div>
-        )}
-
-        {/* ── LUMI CHAT ─────────────────────────────────────────────── */}
-        {tab === 'chat' && (
-          <div style={pageWrap}>
-            <section style={heroCard}>
-              <h1 style={{ margin: '0 0 6px', fontSize: '22px', fontWeight: 800, color: T.text }}>💬 Chat with LUMI</h1>
-              <p style={{ margin: 0, color: T.textMuted, fontSize: '14px' }}>LUMI — Layered Universal Media Intelligence. Your autonomous AI production brain.</p>
-            </section>
-
-            {/* Model settings */}
-            <section style={sectionCard()}>
-              <h2 style={H2}>Model Settings</h2>
-              <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                <div>
-                  <label style={mkLabel(T)}>AI Provider</label>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button onClick={() => setUseOllama(false)} style={{ ...mkBtn(T, useOllama ? 'secondary' : 'gradient'), fontSize: '13px', borderRadius: '8px' }}>☁️ Cloud</button>
-                    <button onClick={() => setUseOllama(true)} style={{ ...mkBtn(T, !useOllama ? 'secondary' : 'gradient'), fontSize: '13px', borderRadius: '8px' }}>🖥️ Local{isOllamaUp ? '' : ' (offline)'}</button>
-                  </div>
-                </div>
-                {useOllama && (
-                  <div>
-                    <label style={mkLabel(T)}>Local Model</label>
-                    <select value={selectedOllamaModel} onChange={e => setSelectedOllamaModel(e.target.value)} style={mkSelect(T)}>
-                      <option value="gemma3:27b">SuperGemma 26B ⭐</option>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+                  {useOllama && (
+                    <select value={selectedOllamaModel} onChange={event => setSelectedOllamaModel(event.target.value)} style={inputStyle(T, { width: 240 })}>
+                      <option value="gemma3:27b">SuperGemma 26B</option>
                       <option value="gemma3:12b">Gemma 3 12B</option>
                       <option value="gemma3:4b">Gemma 3 4B</option>
                       <option value="llama3.1:8b">Llama 3.1 8B</option>
-                      <option value="llama3.1:70b">Llama 3.1 70B</option>
-                      <option value="mistral:7b">Mistral 7B</option>
-                      <option value="qwen2.5:7b">Qwen 2.5 7B</option>
-                      <option value="deepseek-r1:7b">DeepSeek R1 7B</option>
-                      {availableOllamaModels.map(m => <option key={m.id} value={m.id}>{m.label} ✓</option>)}
+                      {availableOllamaModels.map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
                     </select>
-                    {!isOllamaUp && <p style={{ ...mkHint(T), color: T.yellow }}>⚠️ Local AI offline. Run: <code>ollama serve</code></p>}
-                  </div>
-                )}
-                <div>
-                  <label style={mkLabel(T)}>Creative Domain</label>
-                  <select value={chatDomain} onChange={e => setChatDomain(e.target.value)} style={mkSelect(T)}>
-                    <option value="default">🤖 LUMI General</option>
-                    <option value="video">🎥 Video Production</option>
-                    <option value="music">🎵 Music Composition</option>
-                    <option value="game">🎮 Game Design</option>
-                    <option value="code">💻 Code Generation</option>
-                    <option value="creative">✨ Creative Direction</option>
+                  )}
+                  <select value={chatDomain} onChange={event => setChatDomain(event.target.value)} style={inputStyle(T, { width: 220 })}>
+                    <option value="default">General</option>
+                    <option value="video">Video</option>
+                    <option value="music">Music</option>
+                    <option value="game">Game</option>
+                    <option value="code">Code</option>
+                    <option value="creative">Creative</option>
                   </select>
                 </div>
-              </div>
-            </section>
-
-            {/* Chat window */}
-            <section style={sectionCard()}>
-              <div style={{ minHeight: '340px', maxHeight: '500px', overflowY: 'auto', background: isDark ? '#060e1c' : '#faf9ff', borderRadius: '12px', padding: '16px', marginBottom: '14px', display: 'grid', gap: '12px', alignContent: 'start', border: `1px solid ${T.border}` }}>
-                {chatHistory.length === 0 && <p style={{ color: T.textSubtle, margin: 0, fontSize: '13px' }}>Ask LUMI to plan, build, generate video storyboards, compose music, design games, or write code…</p>}
-                {chatHistory.map((msg, idx) => (
-                  <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
-                    <div style={{ maxWidth: '85%', padding: '10px 14px', borderRadius: msg.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px', background: msg.role === 'user' ? T.accentGrad : (isDark ? 'rgba(148,163,184,0.1)' : 'rgba(0,0,0,0.06)'), color: msg.role === 'user' ? '#fff' : T.text, lineHeight: 1.6, whiteSpace: 'pre-wrap', fontSize: '14px' }}>
-                      {msg.content}
-                    </div>
-                    {msg.model && <p style={{ margin: '3px 6px 0', fontSize: '10px', color: T.textSubtle }}>{msg.model}</p>}
-                  </div>
-                ))}
-                {loadingChat && <div style={{ color: T.textSubtle, fontSize: '13px', fontStyle: 'italic' }}>LUMI is thinking…</div>}
-                <div ref={chatEndRef} />
-              </div>
-              <form onSubmit={sendChat} style={{ display: 'flex', gap: '10px' }}>
-                <input value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="Ask LUMI anything — video scripts, game design, code, music, production pipelines…" disabled={loadingChat} style={{ ...mkInput(T), flex: 1, borderRadius: '999px', padding: '12px 18px' }} />
-                <button type="submit" disabled={loadingChat || !chatInput.trim()} style={{ ...mkBtn(T, 'gradient', loadingChat || !chatInput.trim()), borderRadius: '999px', padding: '12px 22px' }}>Send</button>
-              </form>
-              {chatHistory.length > 0 && (
-                <button onClick={() => setChatHistory([])} style={{ ...mkBtn(T, 'secondary'), fontSize: '12px', marginTop: '8px', borderRadius: '8px' }}>Clear chat</button>
-              )}
-            </section>
-          </div>
-        )}
-
-        {/* ── CODE GENERATOR ────────────────────────────────────────── */}
-        {tab === 'code' && (
-          <div style={pageWrap}>
-            <section style={heroCard}>
-              <h1 style={{ margin: '0 0 6px', fontSize: '22px', fontWeight: 800, color: T.text }}>💻 Code & Docs Workspace</h1>
-              <p style={{ margin: 0, color: T.textMuted, fontSize: '14px' }}>Generate production-ready code, documentation, APIs, games, scripts, and builds. All languages. No placeholders.</p>
-            </section>
-
-            <section style={sectionCard()}>
-              <h2 style={H2}>Code Generator</h2>
-              <form onSubmit={generateCode} style={{ display: 'grid', gap: '16px' }}>
-                <div>
-                  <label style={mkLabel(T)}>What to build</label>
-                  <textarea value={codePrompt} onChange={e => setCodePrompt(e.target.value)} rows={4} style={mkTextarea(T)} placeholder="e.g. A React component for a video upload panel with drag-and-drop, progress bar, file validation (mp4/mov only, 500MB max), and a cancel button." />
-                </div>
-                <div>
-                  <label style={mkLabel(T)}>Language / Framework</label>
-                  <select value={codeLanguage} onChange={e => setCodeLanguage(e.target.value)} style={mkSelect(T)}>
-                    <option value="typescript">TypeScript / React</option>
-                    <option value="python">Python</option>
-                    <option value="javascript">JavaScript / Node.js</option>
-                    <option value="lua">Lua (Roblox)</option>
-                    <option value="csharp">C# (Unity)</option>
-                    <option value="gdscript">GDScript (Godot)</option>
-                    <option value="html/css">HTML / CSS</option>
-                    <option value="sql">SQL</option>
-                    <option value="bash">Bash / PowerShell</option>
-                    <option value="rust">Rust</option>
-                    <option value="go">Go</option>
-                    <option value="swift">Swift / SwiftUI</option>
-                    <option value="kotlin">Kotlin (Android)</option>
-                    <option value="markdown">Markdown Documentation</option>
-                  </select>
-                </div>
-                <button type="submit" disabled={generatingCode || !codePrompt.trim()} style={{ ...mkBtn(T, 'gradient', generatingCode || !codePrompt.trim()), padding: '13px 28px', fontSize: '15px', borderRadius: '12px', alignSelf: 'start' }}>
-                  {generatingCode ? '💻 Generating…' : '💻 Generate Code'}
-                </button>
-              </form>
-            </section>
-
-            {codeResult && (
-              <section style={sectionCard()}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-                  <h2 style={{ ...H2, margin: 0 }}>📄 Output</h2>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button onClick={() => navigator.clipboard.writeText(codeResult)} style={{ ...mkBtn(T, 'secondary'), fontSize: '12px', padding: '6px 12px' }}>📋 Copy</button>
-                    <button onClick={() => { const el = document.createElement('a'); const ext = codeLanguage === 'python' ? 'py' : codeLanguage === 'lua' ? 'lua' : codeLanguage === 'html/css' ? 'html' : 'ts'; el.href = URL.createObjectURL(new Blob([codeResult], {type:'text/plain'})); el.download = `lumi-output.${ext}`; el.click(); }} style={{ ...mkBtn(T, 'secondary'), fontSize: '12px', padding: '6px 12px' }}>⬇ Download</button>
-                  </div>
-                </div>
-                <pre style={{ whiteSpace: 'pre-wrap', fontFamily: '"Fira Code", "Cascadia Code", monospace', fontSize: '13px', lineHeight: 1.6, margin: 0, background: isDark ? '#06101e' : '#f8f6ff', padding: '16px', borderRadius: '10px', overflowX: 'auto', maxHeight: '640px', overflowY: 'auto', color: T.text, border: `1px solid ${T.border}` }}>{codeResult}</pre>
-              </section>
-            )}
-          </div>
-        )}
-
-        {/* ── SETTINGS ──────────────────────────────────────────────── */}
-        {tab === 'settings' && (
-          <div style={pageWrap}>
-            <section style={heroCard}>
-              <h1 style={{ margin: '0 0 6px', fontSize: '22px', fontWeight: 800, color: T.text }}>⚙️ Settings</h1>
-              <p style={{ margin: 0, color: T.textMuted, fontSize: '14px' }}>Add your own AI API keys to unlock additional capabilities. All keys are stored securely and never exposed to the browser.</p>
-            </section>
-
-            {/* Your API Keys */}
-            <section style={sectionCard()}>
-              <h2 style={H2}>🔑 Your API Keys</h2>
-              <p style={{ ...mkHint(T), marginBottom: '18px', fontSize: '13px', color: T.textMuted }}>
-                Add your own API key from any supported provider to enable or enhance AI features. The studio works without keys using free tiers, but adding a key unlocks higher quality and more capacity.
-              </p>
-
-              {userKeys && userKeys.configured_count > 0 && (
-                <div style={{ marginBottom: '20px', display: 'grid', gap: '10px' }}>
-                  <h3 style={{ margin: '0 0 8px', fontSize: '13px', color: T.textMuted, fontWeight: 600 }}>Configured Keys ({userKeys.configured_count})</h3>
-                  {userKeys.providers.filter(p => p.configured).map(p => (
-                    <div key={p.provider} style={{ ...listRow, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <strong style={{ fontSize: '14px', color: T.text }}>{p.name}</strong>
-                        <span style={{ marginLeft: '12px', fontSize: '12px', color: T.textSubtle, fontFamily: 'monospace' }}>{p.key_preview}</span>
-                        {p.added_at && <p style={{ margin: '2px 0 0', fontSize: '11px', color: T.textSubtle }}>Added {new Date(p.added_at).toLocaleDateString()}</p>}
+                <div className="studio-scroll" style={{ ...panelStyle(T, { padding: 16, background: T.panelSoft, boxShadow: 'none', minHeight: 420, maxHeight: 560, overflowY: 'auto' }) }}>
+                  {chatHistory.length === 0 && <div style={{ color: T.textSoft, fontSize: 13 }}>Ask LUMI to plan a launch campaign, generate a storyboard, write prompts, or architect code.</div>}
+                  <div className="studio-list">
+                    {chatHistory.map((message, index) => (
+                      <div key={`${message.role}-${index}`} style={{ display: 'flex', justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                        <div style={{ maxWidth: '88%', padding: '14px 16px', borderRadius: 20, background: message.role === 'user' ? T.accentGradient : T.panel, color: message.role === 'user' ? '#fff' : T.text, border: message.role === 'user' ? 'none' : `1px solid ${T.border}` }}>
+                          <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.7, fontSize: 14 }}>{message.content}</div>
+                          {message.model && <div style={{ marginTop: 8, color: message.role === 'user' ? 'rgba(255,255,255,0.78)' : T.textSoft, fontSize: 11 }}>{message.model}</div>}
+                        </div>
                       </div>
-                      <button onClick={() => removeUserKey(p.provider)} style={{ ...mkBtn(T, 'danger'), fontSize: '12px', padding: '5px 12px' }}>Remove</button>
-                    </div>
-                  ))}
+                    ))}
+                    {loadingChat && <div style={{ color: T.textSoft, fontSize: 13 }}>LUMI is thinking…</div>}
+                    <div ref={chatEndRef} />
+                  </div>
                 </div>
-              )}
+                <form onSubmit={sendChat} style={{ display: 'grid', gap: 12, marginTop: 16 }}>
+                  <textarea value={chatInput} onChange={event => setChatInput(event.target.value)} rows={3} style={inputStyle(T)} placeholder='Ask LUMI anything about video, music, image prompts, launch plans, or code…' />
+                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                    <button type="submit" disabled={loadingChat || !chatInput.trim()} style={buttonStyle(T, 'primary', loadingChat || !chatInput.trim())}>{loadingChat ? 'Sending…' : 'Send to LUMI'}</button>
+                    {chatHistory.length > 0 && <button type="button" onClick={() => setChatHistory([])} style={buttonStyle(T, 'ghost')}>Clear chat</button>}
+                  </div>
+                </form>
+              </div>
+              <div style={{ display: 'grid', gap: 18 }}>
+                <div style={panelStyle(T, { padding: 18 })}>
+                  <h2 style={sectionTitleStyle(T)}>Suggested asks</h2>
+                  <div className="studio-list" style={{ marginTop: 14 }}>
+                    {['Plan a homepage redesign inspired by Runway.', 'Write a storyboard for a studio launch trailer.', 'Generate prompt variations for luxury product key art.', 'Draft a rollout strategy for a new music video release.'].map(prompt => (
+                      <button key={prompt} onClick={() => setChatInput(prompt)} style={{ ...buttonStyle(T, 'ghost'), textAlign: 'left' }}>{prompt}</button>
+                    ))}
+                  </div>
+                </div>
+                <div style={panelStyle(T, { padding: 18 })}>
+                  <h2 style={sectionTitleStyle(T)}>Local AI</h2>
+                  <div style={{ color: T.textMuted, fontSize: 13, lineHeight: 1.7, marginTop: 12 }}>{isOllamaUp ? `Ollama online at ${ollamaStatus?.host}` : (ollamaStatus?.installHint || 'Run Ollama locally to use offline creative workflows.')}</div>
+                </div>
+              </div>
+            </div>
+          )}
 
-              <form onSubmit={saveUserKey} style={{ display: 'grid', gap: '14px' }}>
-                <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                  <div>
-                    <label style={mkLabel(T)}>Provider</label>
-                    <select value={addKeyProvider} onChange={e => setAddKeyProvider(e.target.value)} style={mkSelect(T)}>
-                      <option value="openrouter">OpenRouter (recommended)</option>
-                      <option value="openai">OpenAI</option>
-                      <option value="anthropic">Anthropic</option>
-                      <option value="google">Google AI</option>
-                    </select>
-                  </div>
-                  <div style={{ flex: 1, minWidth: '240px' }}>
-                    <label style={mkLabel(T)}>API Key</label>
-                    <input type="password" value={addKeyValue} onChange={e => setAddKeyValue(e.target.value)} placeholder="Paste your API key here…" style={mkInput(T)} />
-                  </div>
-                  <div style={{ minWidth: '160px' }}>
-                    <label style={mkLabel(T)}>Label (optional)</label>
-                    <input value={addKeyLabel} onChange={e => setAddKeyLabel(e.target.value)} placeholder="My key" style={mkInput(T)} />
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <button type="submit" disabled={addKeyLoading || !addKeyValue.trim()} style={{ ...mkBtn(T, 'gradient', addKeyLoading || !addKeyValue.trim()), borderRadius: '10px', padding: '11px 22px' }}>
-                    {addKeyLoading ? 'Saving…' : '💾 Save Key'}
-                  </button>
-                  <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" style={{ fontSize: '13px', color: T.accent, textDecoration: 'none', fontWeight: 600 }}>Get a free OpenRouter key →</a>
-                </div>
-                {addKeyMsg && <p style={{ margin: 0, fontSize: '13px', color: addKeyMsg.startsWith('⚠️') ? T.red : T.green }}>{addKeyMsg}</p>}
-              </form>
-            </section>
-
-            {/* Available providers directory */}
-            <section style={sectionCard()}>
-              <h2 style={H2}>🌐 Supported AI Providers</h2>
-              <div style={autoGrid}>
-                {[
-                  { name: 'OpenRouter', desc: 'Access 100+ AI models with one key. Recommended.', url: 'https://openrouter.ai/keys', free: true },
-                  { name: 'OpenAI', desc: 'GPT-4o, DALL-E 3, and Whisper for audio transcription.', url: 'https://platform.openai.com/api-keys', free: false },
-                  { name: 'Anthropic', desc: 'Claude Opus, Sonnet — best for long-form creative writing.', url: 'https://console.anthropic.com/', free: false },
-                  { name: 'Google AI', desc: 'Gemini Pro for multimodal generation.', url: 'https://aistudio.google.com/app/apikey', free: true },
-                  { name: 'HuggingFace', desc: 'MusicGen, FLUX, SDXL for music & image generation.', url: 'https://huggingface.co/settings/tokens', free: true },
-                  { name: 'Replicate', desc: 'Run thousands of open-source models in the cloud.', url: 'https://replicate.com/account/api-tokens', free: false },
-                ].map(p => (
-                  <div key={p.name} style={listRow}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                      <strong style={{ fontSize: '14px', color: T.text }}>{p.name}</strong>
-                      {p.free && <span style={{ ...pill('active', T), fontSize: '10px' }}>Free tier</span>}
+          {tab === 'code' && (
+            <div style={{ display: 'grid', gap: 18 }}>
+              <section className="studio-grid-2">
+                <div style={panelStyle(T, { padding: 22 })}>
+                  <h1 style={{ margin: 0, fontSize: 30 }}>Code & docs workspace</h1>
+                  <p style={{ color: T.textMuted, fontSize: 14, lineHeight: 1.7, margin: '10px 0 18px' }}>Generate UI components, backend workers, launch documentation, and production-ready snippets from the same premium shell.</p>
+                  <form onSubmit={generateCode} style={{ display: 'grid', gap: 14 }}>
+                    <textarea value={codePrompt} onChange={event => setCodePrompt(event.target.value)} rows={6} style={inputStyle(T)} placeholder='Describe what you want to build…' />
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                      <select value={codeLanguage} onChange={event => setCodeLanguage(event.target.value)} style={inputStyle(T, { width: 240 })}>
+                        {CODE_LANGUAGES.map(language => <option key={language} value={language}>{language}</option>)}
+                      </select>
+                      <button type="submit" disabled={generatingCode || !codePrompt.trim()} style={buttonStyle(T, 'primary', generatingCode || !codePrompt.trim())}>{generatingCode ? 'Generating…' : 'Generate code'}</button>
                     </div>
-                    <p style={{ margin: '0 0 8px', fontSize: '12px', color: T.textMuted }}>{p.desc}</p>
-                    <a href={p.url} target="_blank" rel="noreferrer" style={{ fontSize: '12px', color: T.accent, textDecoration: 'none', fontWeight: 600 }}>Get API key →</a>
+                  </form>
+                </div>
+                <div style={panelStyle(T, { padding: 18 })}>
+                  <h2 style={sectionTitleStyle(T)}>Starter prompts</h2>
+                  <div className="studio-list" style={{ marginTop: 14 }}>
+                    {codePresets.map(template => <TemplateCard key={template.id} T={T} template={template} />)}
+                  </div>
+                </div>
+              </section>
+              <section style={panelStyle(T, { padding: 20 })}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+                  <h2 style={sectionTitleStyle(T)}>Output</h2>
+                  {codeResult && (
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                      <button onClick={() => void copyText(codeResult)} style={buttonStyle(T, 'ghost')}>Copy</button>
+                      <button onClick={() => downloadTextFile(codeResult, 'lumi-output.txt')} style={buttonStyle(T, 'secondary')}>Download</button>
+                    </div>
+                  )}
+                </div>
+                <div style={{ ...panelStyle(T, { padding: 16, background: T.panelSoft, boxShadow: 'none', minHeight: 360 }) }}>
+                  <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowX: 'auto', color: codeResult ? T.text : T.textSoft, lineHeight: 1.7 }}>{codeResult || 'Generated code, docs, or scripts will appear here.'}</pre>
+                </div>
+              </section>
+            </div>
+          )}
+
+          {tab === 'settings' && (
+            <div style={{ display: 'grid', gap: 18 }}>
+              <section className="studio-grid-2">
+                <div style={panelStyle(T, { padding: 22 })}>
+                  <h1 style={{ margin: 0, fontSize: 30 }}>Settings & provider directory</h1>
+                  <p style={{ color: T.textMuted, fontSize: 14, lineHeight: 1.7, margin: '10px 0 18px' }}>Manage your AI provider keys, see what is configured, and keep the studio connected to higher-quality media generation.</p>
+                  <form onSubmit={saveUserKey} style={{ display: 'grid', gap: 14 }}>
+                    <div className="studio-grid-3">
+                      <select value={addKeyProvider} onChange={event => setAddKeyProvider(event.target.value)} style={inputStyle(T)}>
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                        <option value="google">Google AI</option>
+                      </select>
+                      <input type="password" value={addKeyValue} onChange={event => setAddKeyValue(event.target.value)} style={inputStyle(T)} placeholder='API key' />
+                      <input value={addKeyLabel} onChange={event => setAddKeyLabel(event.target.value)} style={inputStyle(T)} placeholder='Optional label' />
+                    </div>
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <button type="submit" disabled={addKeyLoading || !addKeyValue.trim()} style={buttonStyle(T, 'primary', addKeyLoading || !addKeyValue.trim())}>{addKeyLoading ? 'Saving…' : 'Save key'}</button>
+                      <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" style={{ color: T.accent2, fontWeight: 700, textDecoration: 'none' }}>Get OpenRouter key →</a>
+                    </div>
+                    {addKeyMsg && <div style={{ color: addKeyMsg.startsWith('⚠️') ? T.danger : T.success, fontSize: 13 }}>{addKeyMsg}</div>}
+                  </form>
+                </div>
+                <div style={panelStyle(T, { padding: 20 })}>
+                  <h2 style={sectionTitleStyle(T)}>Configured keys</h2>
+                  <div className="studio-list" style={{ marginTop: 14 }}>
+                    {(userKeys?.providers.filter(provider => provider.configured) ?? []).length === 0 && <div style={{ color: T.textSoft, fontSize: 13 }}>No provider keys saved yet.</div>}
+                    {(userKeys?.providers.filter(provider => provider.configured) ?? []).map(provider => (
+                      <div key={provider.provider} style={{ ...panelStyle(T, { padding: 14, background: T.panelSoft, boxShadow: 'none' }) }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                          <div>
+                            <strong style={{ color: T.text }}>{provider.name}</strong>
+                            <div style={{ color: T.textSoft, fontSize: 12, marginTop: 4 }}>{provider.key_preview}</div>
+                          </div>
+                          <button onClick={() => removeUserKey(provider.provider)} style={buttonStyle(T, 'danger')}>Remove</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              <section className="studio-grid-3">
+                {(userKeys?.providers ?? []).map(provider => (
+                  <div key={provider.provider} className="card-hover" style={panelStyle(T, { padding: 18 })}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'start' }}>
+                      <div>
+                        <div style={{ color: T.text, fontWeight: 800 }}>{provider.name}</div>
+                        <div style={{ color: T.textSoft, fontSize: 12, marginTop: 4 }}>{provider.cost}</div>
+                      </div>
+                      <span style={badgeStyle(T, provider.configured ? 'configured' : provider.recommended ? 'recommended' : 'available')}>{provider.configured ? 'Configured' : provider.recommended ? 'Recommended' : 'Available'}</span>
+                    </div>
+                    <p style={{ color: T.textMuted, fontSize: 13, lineHeight: 1.7, margin: '12px 0 14px' }}>{provider.description}</p>
+                    <a href={provider.get_key_url} target="_blank" rel="noreferrer" style={{ color: T.accent2, fontWeight: 700, textDecoration: 'none' }}>Get key →</a>
                   </div>
                 ))}
-              </div>
-            </section>
+              </section>
 
-            {/* Local AI setup */}
-            <section style={sectionCard()}>
-              <h2 style={H2}>🖥️ Local AI (Ollama)</h2>
-              <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', marginBottom: '16px' }}>
-                <div style={{ ...listRow, flex: 1, minWidth: '160px', background: isOllamaUp ? (isDark ? 'rgba(34,197,94,0.08)' : 'rgba(34,197,94,0.05)') : (isDark ? 'rgba(239,68,68,0.08)' : 'rgba(239,68,68,0.05)'), border: `1px solid ${isOllamaUp ? T.green : T.red}30` }}>
-                  <p style={{ margin: '0 0 4px', fontSize: '12px', color: T.textMuted }}>Status</p>
-                  <strong style={{ color: isOllamaUp ? T.green : T.red }}>{isOllamaUp ? '✅ Running' : '⚠️ Offline'}</strong>
-                  <p style={{ margin: '3px 0 0', fontSize: '11px', color: T.textSubtle }}>{ollamaStatus?.host ?? 'http://localhost:11434'}</p>
-                </div>
-                <div style={{ ...listRow, flex: 1, minWidth: '160px' }}>
-                  <p style={{ margin: '0 0 4px', fontSize: '12px', color: T.textMuted }}>Models Installed</p>
-                  <strong style={{ fontSize: '22px', color: T.text }}>{ollamaStatus?.localModels.length ?? 0}</strong>
-                  <p style={{ margin: '3px 0 0', fontSize: '11px', color: T.textSubtle }}>{(ollamaStatus?.localModels ?? []).map(m => m.name).join(', ') || 'none pulled'}</p>
-                </div>
-              </div>
-              {!isOllamaUp && (
-                <div style={{ ...listRow, background: isDark ? 'rgba(250,204,21,0.07)' : 'rgba(250,204,21,0.08)', border: `1px solid rgba(250,204,21,0.25)`, padding: '14px 16px', marginBottom: '12px' }}>
-                  <p style={{ margin: '0 0 10px', fontSize: '13px', color: T.text }}>
-                    <strong style={{ color: T.yellow }}>Quick Setup:</strong><br />
-                    <code style={{ color: T.textMuted }}>1. Download Ollama → 2. ollama serve → 3. ollama pull gemma3:27b</code>
-                  </p>
-                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                    <a href="https://ollama.com/download" target="_blank" rel="noreferrer" style={{ ...mkBtn(T, 'secondary'), fontSize: '12px', padding: '7px 14px', textDecoration: 'none', display: 'inline-block', borderRadius: '8px' }}>⬇ Download Ollama</a>
-                    <a href="https://github.com/Trezzhaused/trezzworld-production-studio#readme" target="_blank" rel="noreferrer" style={{ ...mkBtn(T, 'secondary'), fontSize: '12px', padding: '7px 14px', textDecoration: 'none', display: 'inline-block', borderRadius: '8px' }}>📖 Setup Guide</a>
+              <section className="studio-grid-2">
+                <div style={panelStyle(T, { padding: 20 })}>
+                  <h2 style={sectionTitleStyle(T)}>Local AI</h2>
+                  <div className="studio-grid-3" style={{ marginTop: 14 }}>
+                    <div style={{ ...panelStyle(T, { padding: 14, background: T.panelSoft, boxShadow: 'none' }) }}>
+                      <div style={{ color: T.textSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>Status</div>
+                      <div style={{ color: isOllamaUp ? T.success : T.danger, fontSize: 22, fontWeight: 900, marginTop: 8 }}>{isOllamaUp ? 'Running' : 'Offline'}</div>
+                      <div style={{ color: T.textMuted, fontSize: 12, marginTop: 6 }}>{ollamaStatus?.host ?? 'http://localhost:11434'}</div>
+                    </div>
+                    <div style={{ ...panelStyle(T, { padding: 14, background: T.panelSoft, boxShadow: 'none' }) }}>
+                      <div style={{ color: T.textSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>Models</div>
+                      <div style={{ color: T.text, fontSize: 22, fontWeight: 900, marginTop: 8 }}>{ollamaStatus?.localModels.length ?? 0}</div>
+                      <div style={{ color: T.textMuted, fontSize: 12, marginTop: 6 }}>{(ollamaStatus?.localModels ?? []).map(model => model.name).join(', ') || 'No local models yet'}</div>
+                    </div>
+                    <div style={{ ...panelStyle(T, { padding: 14, background: T.panelSoft, boxShadow: 'none' }) }}>
+                      <div style={{ color: T.textSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>Recommended</div>
+                      <div style={{ color: T.text, fontSize: 22, fontWeight: 900, marginTop: 8 }}>Gemma</div>
+                      <div style={{ color: T.textMuted, fontSize: 12, marginTop: 6 }}>Pull gemma3:27b for the best local studio experience.</div>
+                    </div>
                   </div>
                 </div>
-              )}
-            </section>
-          </div>
-        )}
-
-      </main>
+                <div style={panelStyle(T, { padding: 20 })}>
+                  <h2 style={sectionTitleStyle(T)}>Setup notes</h2>
+                  <div style={{ color: T.textMuted, fontSize: 13, lineHeight: 1.8, marginTop: 12 }}>
+                    {ollamaStatus?.installHint || 'Download Ollama, run ollama serve, then pull gemma3:27b to enable local creative workflows.'}
+                  </div>
+                </div>
+              </section>
+            </div>
+          )}
+        </main>
+      </div>
     </div>
   );
 }
