@@ -604,6 +604,22 @@ def image_generate(payload: ImageGenerateRequest):
 # Roblox Game Suite — LUMI-driven game creation with Luau scripts + ZIP export
 # ---------------------------------------------------------------------------
 
+@app.get("/api/roblox/lookup-universe")
+def roblox_lookup_universe(placeId: str):
+    """
+    Best-effort convenience lookup: derive a universe ID from a place ID (or a
+    pasted Roblox game URL) via a legacy public endpoint. Not official Open
+    Cloud — there's no sanctioned API to fully auto-discover a signed-in
+    user's experiences (it would require Roblox's website session cookie,
+    which this app will never request or store). Returns null on failure;
+    the frontend falls back to asking for the universe ID manually.
+    """
+    from .roblox_publisher import extract_place_id, lookup_universe_id  # noqa: PLC0415
+    clean_place_id = extract_place_id(placeId)
+    universe_id = lookup_universe_id(clean_place_id)
+    return {"placeId": clean_place_id, "universeId": universe_id}
+
+
 class RobloxCreateRequest(BaseModel):
     concept: str
     genre: str = "Adventure"

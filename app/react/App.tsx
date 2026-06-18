@@ -1448,7 +1448,23 @@ function RobloxTab() {
   const [creating, setCreating] = useState(false);
   const [selectedJob, setSelectedJob] = useState<RobloxJob | null>(null);
   const [oauthStatus, setOauthStatus] = useState<{ connected: boolean; user?: any }>({ connected: false });
+  const [lookingUpUniverse, setLookingUpUniverse] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const lookupUniverseFromPlace = async (rawPlaceId: string) => {
+    if (!rawPlaceId.trim() || universeId.trim()) return; // don't override a manually-entered universe ID
+    setLookingUpUniverse(true);
+    try {
+      const res = await fetch(`${API}/roblox/lookup-universe?placeId=${encodeURIComponent(rawPlaceId)}`);
+      const data = await res.json();
+      if (data.placeId) setPlaceId(data.placeId); // normalizes a pasted URL down to just the numeric ID
+      if (data.universeId) setUniverseId(data.universeId);
+    } catch {
+      // best-effort only — leave universeId blank for manual entry
+    } finally {
+      setLookingUpUniverse(false);
+    }
+  };
 
   const loadOauthStatus = () => {
     fetch(`${API}/roblox/oauth/status`).then((r) => r.json()).then(setOauthStatus).catch(() => {});
@@ -1548,8 +1564,21 @@ function RobloxTab() {
           </select>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <input type="text" placeholder="Universe ID (from your created Experience)" value={universeId} onChange={(e) => setUniverseId(e.target.value)} style={{ ...inputStyle, width: 220 }} />
-          <input type="text" placeholder="Place ID" value={placeId} onChange={(e) => setPlaceId(e.target.value)} style={{ ...inputStyle, width: 140 }} />
+          <input
+            type="text"
+            placeholder="Place ID (or paste the game's roblox.com URL)"
+            value={placeId}
+            onChange={(e) => setPlaceId(e.target.value)}
+            onBlur={(e) => lookupUniverseFromPlace(e.target.value)}
+            style={{ ...inputStyle, width: 260 }}
+          />
+          <input
+            type="text"
+            placeholder={lookingUpUniverse ? "Looking up..." : "Universe ID (auto-fills if found)"}
+            value={universeId}
+            onChange={(e) => setUniverseId(e.target.value)}
+            style={{ ...inputStyle, width: 220 }}
+          />
           <div style={{ flex: 1 }} />
           <button onClick={createJob} disabled={!canCreate} style={{ ...btnStyle(!!canCreate), padding: "10px 20px", fontSize: 13, fontWeight: 700 }}>
             {creating ? "⏳ Creating..." : "🎮 Generate Game"}
@@ -1560,7 +1589,9 @@ function RobloxTab() {
             Don't have these yet? Create an empty Experience at{" "}
             <a href="https://create.roblox.com/dashboard/creations" target="_blank" rel="noreferrer" style={{ color: "#38bdf8" }}>
               create.roblox.com
-            </a>{" "}— Roblox doesn't offer an API to create one from scratch.
+            </a>{" "}— Roblox doesn't offer an API to create one from scratch, or to list your
+            experiences automatically even when signed in. Paste the Place ID (or the game's
+            URL) above and the Universe ID auto-fills when possible.
           </div>
         )}
       </div>

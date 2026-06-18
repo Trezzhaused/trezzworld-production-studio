@@ -16,8 +16,8 @@ ROBLOX_API_KEY / ROBLOX_UNIVERSE_ID / ROBLOX_PLACE_ID as environment variables.
 from __future__ import annotations
 
 import json as _json
-import mimetypes
 import os
+import re
 import urllib.error
 import urllib.request
 import uuid
@@ -27,6 +27,7 @@ from xml.sax.saxutils import escape
 _OPEN_CLOUD_BASE = "https://apis.roblox.com/universes/v1"
 _GAME_PASS_BASE = "https://apis.roblox.com/game-passes/v1"
 _DEV_PRODUCT_BASE = "https://apis.roblox.com/developer-products/v2"
+_PLACE_TO_UNIVERSE_URL = "https://apis.roblox.com/universes/v1/places/{place_id}/universe"
 
 # Rojo path prefix -> Roblox service class name
 _SERVICE_MAP: dict[str, str] = {
@@ -265,3 +266,41 @@ def list_developer_products(universe_id: str, api_key: str | None = None, bearer
             return _json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         raise RobloxPublishError(f"Could not list developer products ({exc.code}): {exc.read().decode('utf-8', errors='replace')[:300]}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Place ID convenience helpers — NOT official Open Cloud (no sanctioned API
+# exists to list a signed-in user's experiences; the only way to do that
+# requires Roblox's website session cookie, which this app will never ask
+# for or store — sharing that cookie is equivalent to sharing a password and
+# violates Roblox's terms). This is a best-effort, unauthenticated legacy
+# lookup that only reduces "find two IDs" to "find one ID" — not a full
+# auto-discovery solution.
+# ---------------------------------------------------------------------------
+
+_PLACE_ID_FROM_URL_RE = re.compile(r"roblox\.com/games/(\d+)")
+
+
+def extract_place_id(value: str) -> str:
+    """Pull a numeric place ID out of a pasted Roblox game URL, or return the
+    input unchanged if it's already just a number."""
+    value = value.strip()
+    match = _PLACE_ID_FROM_URL_RE.search(value)
+    if match:
+        return match.group(1)
+    return value
+
+
+def lookup_universe_id(place_id: str) -> str | None:
+    """Best-effort: derive a universe ID from a place ID via a legacy public
+    Roblox endpoint. Returns None on any failure — caller should fall back to
+    asking the user to enter the universe ID manually."""
+    url = _PLACE_TO_UNIVERSE_URL.format(place_id=place_id)
+    req = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+            universe_id = data.get("universeId")
+            return str(universe_id) if universe_id else None
+    except Exception:
+        return None
