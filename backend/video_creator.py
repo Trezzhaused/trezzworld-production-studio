@@ -42,7 +42,7 @@ try:
 except ImportError:
     _PIL_AVAILABLE = False
 
-EXPORTS_DIR = Path("exports/video")
+EXPORTS_DIR = Path(os.environ.get("VIDEO_EXPORT_DIR", "/tmp/trezzworld/exports/video"))
 MAX_DURATION_SECONDS = 600  # 10 minutes hard cap
 DEFAULT_FPS = 24
 DEFAULT_RESOLUTION = (1920, 1080)
@@ -855,3 +855,4 @@ def get_video_output_path(job_id: str) -> Path | None:
         return None
     p = Path(job.output_path)
     return p if p.exists() else None
+
