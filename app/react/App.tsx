@@ -1234,6 +1234,169 @@ const pillStyle: React.CSSProperties = {
   width: "auto",
 };
 
+// ── LUMI Chat Tab ─────────────────────────────────────────────────────────────
+
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  model?: string;
+}
+
+const DOMAINS = [
+  { id: "default", label: "General" },
+  { id: "video", label: "Video Production" },
+  { id: "music", label: "Music Composition" },
+  { id: "game", label: "Game Design" },
+  { id: "code", label: "Code Generation" },
+  { id: "creative", label: "Creative Direction" },
+];
+
+function getOrCreateSessionId(): string {
+  const key = "trezzworld_lumi_session";
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = `session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem(key, id);
+  }
+  return id;
+}
+
+function LumiTab() {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [domain, setDomain] = useState("default");
+  const [useOllama, setUseOllama] = useState(false);
+  const [ollamaModel, setOllamaModel] = useState("");
+  const [ollamaModels, setOllamaModels] = useState<{ id: string; available: boolean }[]>([]);
+  const [cascade, setCascade] = useState<{ id: string; tier: string }[]>([]);
+  const sessionId = useRef(getOrCreateSessionId());
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetch(`${API}/lumi/chat/history?mission_id=${sessionId.current}`)
+      .then((r) => r.json())
+      .then((d) => {
+        const history = (d.history ?? []).map((h: any) => ({ role: h.role, content: h.content, model: h.model_used }));
+        setMessages(history);
+      })
+      .catch(() => {});
+
+    fetch(`${API}/lumi/models`).then((r) => r.json()).then((d) => {
+      setCascade(d.cascade ?? []);
+      setOllamaModels(d.ollama?.catalogue ?? []);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages]);
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || sending) return;
+    setInput("");
+    setMessages((prev) => [...prev, { role: "user", content: text }]);
+    setSending(true);
+    try {
+      const res = await fetch(`${API}/lumi/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: text,
+          missionId: sessionId.current,
+          useOllama,
+          ollamaModel: useOllama ? (ollamaModel || undefined) : undefined,
+          domain,
+        }),
+      });
+      const data = await res.json();
+      setMessages((prev) => [...prev, { role: "assistant", content: data.content, model: data.model }]);
+    } catch (err) {
+      setMessages((prev) => [...prev, { role: "assistant", content: "LUMI is unreachable — check your connection." }]);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 140px)", gap: 10 }}>
+      {/* AI choice bar */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <select value={domain} onChange={(e) => setDomain(e.target.value)} style={pillStyle} title="Conversation domain">
+          {DOMAINS.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
+        </select>
+
+        <button
+          onClick={() => setUseOllama(!useOllama)}
+          style={{ ...pillStyle, cursor: "pointer", color: useOllama ? "#38bdf8" : "#64748b" }}
+          title="Toggle between the free OpenRouter model cascade and your local Ollama"
+        >
+          {useOllama ? "🖥 Local Ollama" : "☁ OpenRouter cascade"}
+        </button>
+
+        {useOllama && (
+          <select value={ollamaModel} onChange={(e) => setOllamaModel(e.target.value)} style={pillStyle}>
+            <option value="">Auto (SuperGemma)</option>
+            {ollamaModels.filter((m) => m.available).map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
+          </select>
+        )}
+
+        {!useOllama && cascade.length > 0 && (
+          <span style={{ color: "#475569", fontSize: 11 }} title={cascade.map((c) => c.id).join(", ")}>
+            {cascade.length} models in cascade
+          </span>
+        )}
+      </div>
+
+      {/* Messages */}
+      <div ref={scrollRef} style={{
+        flex: 1, overflowY: "auto", background: "#0a0f1a", border: "1px solid #1e3a5f",
+        borderRadius: 10, padding: 16, display: "flex", flexDirection: "column", gap: 12,
+      }}>
+        {messages.length === 0 && (
+          <div style={{ color: "#475569", fontSize: 13, textAlign: "center", marginTop: 60 }}>
+            🤖 Ask LUMI anything — video ideas, music direction, game design, code, or creative strategy.
+          </div>
+        )}
+        {messages.map((m, i) => (
+          <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+            <div style={{
+              maxWidth: "75%", padding: "10px 14px", borderRadius: 10, fontSize: 13, lineHeight: 1.5,
+              whiteSpace: "pre-wrap",
+              background: m.role === "user" ? "#0ea5e9" : "#0f172a",
+              color: m.role === "user" ? "#fff" : "#e2e8f0",
+            }}>
+              {m.content}
+              {m.role === "assistant" && m.model && m.model !== "none" && (
+                <div style={{ color: "#475569", fontSize: 10, marginTop: 6 }}>— {m.model}</div>
+              )}
+            </div>
+          </div>
+        ))}
+        {sending && (
+          <div style={{ color: "#475569", fontSize: 12 }}>🤖 LUMI is thinking…</div>
+        )}
+      </div>
+
+      {/* Input */}
+      <div style={{ display: "flex", gap: 8 }}>
+        <textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+          placeholder="Message LUMI... (Enter to send, Shift+Enter for new line)"
+          rows={2}
+          style={{ ...inputStyle, flex: 1, resize: "vertical" }}
+        />
+        <button onClick={send} disabled={sending || !input.trim()} style={btnStyle(!sending && !!input.trim())}>
+          {sending ? "⏳" : "➤ Send"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── App shell ─────────────────────────────────────────────────────────────────
 
 type Tab = "video" | "music" | "lumi" | "roblox" | "settings";
@@ -1300,11 +1463,7 @@ export default function App() {
       <div style={{ flex: 1, padding: 24, maxWidth: 1200, width: "100%", margin: "0 auto" }}>
         {tab === "video" && <VideoTab />}
         {tab === "music" && <MusicTab />}
-        {tab === "lumi" && (
-          <div style={{ color: "#64748b", textAlign: "center", paddingTop: 80 }}>
-            LUMI AI Chat — coming in next build
-          </div>
-        )}
+        {tab === "lumi" && <LumiTab />}
         {tab === "roblox" && (
           <div style={{ color: "#64748b", textAlign: "center", paddingTop: 80 }}>
             Roblox Game Creator — coming in next build
