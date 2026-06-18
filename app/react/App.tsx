@@ -338,6 +338,7 @@ export default function App() {
   const T = isDark ? dark : light;
 
   const [tab, setTab] = useState<Tab>('video');
+  const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const [musicSubTab, setMusicSubTab] = useState<MusicSubTab>('musicvideo');
 
   const [backendStatus, setBackendStatus] = useState<BackendStatus | null>(null);
@@ -352,6 +353,7 @@ export default function App() {
   const [activeMissionId, setActiveMissionId] = useState<string | null>(null);
   const [pipelineStatus, setPipelineStatus] = useState<PipelineStatus | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const toolMenuRef = useRef<HTMLDivElement>(null);
 
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -412,6 +414,16 @@ export default function App() {
   const [mvStyle, setMvStyle] = useState('music video');
   const [mvDuration, setMvDuration] = useState(120);
   const [creatingMv, setCreatingMv] = useState(false);
+
+  useEffect(() => {
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!toolMenuRef.current?.contains(event.target as Node)) {
+        setToolMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -907,6 +919,13 @@ export default function App() {
   ], []);
 
   const pageTitle = NAV_ITEMS.find(item => item.id === tab)?.label ?? 'Studio';
+  const openToolTab = (nextTab: Tab) => { setTab(nextTab); setToolMenuOpen(false); };
+  const quickToolOptions: Array<{ id: string; label: string; caption: string; tab: Tab }> = [
+    { id: 'model', label: 'Model', caption: 'Choose cloud/local model + domain', tab: 'chat' },
+    { id: 'design', label: 'Design', caption: 'Image direction + prompt tools', tab: 'image' },
+    { id: 'output', label: 'Output', caption: 'Code/docs output panel + export', tab: 'code' },
+    { id: 'edit', label: 'Edit', caption: 'Video timeline + controls', tab: 'video' },
+  ];
 
   return (
     <div style={{ minHeight: '100vh', background: T.bgRadial, color: T.text }}>
@@ -978,6 +997,33 @@ export default function App() {
               <div style={{ fontSize: 14, color: T.textMuted, marginTop: 4 }}>{controlPlane?.finishLine ?? 'Build cinematic media, images, code, and campaigns from one premium dashboard.'}</div>
             </div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <div ref={toolMenuRef} style={{ position: 'relative' }}>
+                <button onClick={() => setToolMenuOpen(value => !value)} style={buttonStyle(T, 'ghost')}>{toolMenuOpen ? 'Close tools' : 'All tools'}</button>
+                {toolMenuOpen && (
+                  <div style={{ ...panelStyle(T, { padding: 14, position: 'absolute', top: 'calc(100% + 10px)', right: 0, width: 380, zIndex: 20, boxShadow: T.shadow }), background: T.panelAlt }}>
+                    <div style={{ color: T.textSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>Quick options</div>
+                    <div className="studio-list" style={{ marginBottom: 14 }}>
+                      {quickToolOptions.map(option => (
+                        <button key={option.id} onClick={() => openToolTab(option.tab)} style={{ ...buttonStyle(T, tab === option.tab ? 'secondary' : 'ghost'), textAlign: 'left', width: '100%' }}>
+                          <div style={{ fontWeight: 800, color: tab === option.tab ? T.text : T.textMuted }}>{option.label}</div>
+                          <div style={{ fontSize: 12, marginTop: 4, color: T.textSoft }}>{option.caption}</div>
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ color: T.textSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>All tools</div>
+                    <div className="studio-list">
+                      {NAV_ITEMS.map(item => (
+                        <button key={`tool-${item.id}`} onClick={() => openToolTab(item.id)} style={{ ...buttonStyle(T, tab === item.id ? 'secondary' : 'ghost'), textAlign: 'left', width: '100%' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                            <span style={{ fontWeight: 800, color: tab === item.id ? T.text : T.textMuted }}>{item.icon} {item.label}</span>
+                            <span style={{ fontSize: 11, color: T.textSoft }}>{item.caption}</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
               <button onClick={() => { setTab('video'); setVideoQuickPrompt('Create a cinematic product teaser for TrezzWorld Production Studio.'); }} style={buttonStyle(T, 'secondary')}>Quick teaser</button>
               <button onClick={() => setTab('settings')} style={buttonStyle(T, 'ghost')}>Providers</button>
             </div>
