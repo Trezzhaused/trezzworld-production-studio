@@ -563,17 +563,16 @@ def _ffmpeg_available() -> bool:
         return False
 
 
-def _encode_frames_to_mp4(
+def _run_x264_encode(
+    ffmpeg: Path,
     frames_dir: Path,
     output_path: Path,
     fps: int,
     resolution: tuple[int, int],
+    preset: str,
+    crf: int,
+    threads: int,
 ) -> tuple[bool, str]:
-    """Use FFmpeg to encode a directory of PNG frames into an MP4. Returns (success, stderr_tail)."""
-    ffmpeg = _find_ffmpeg_executable()
-    if ffmpeg is None:
-        return False, "ffmpeg executable not found"
-
     w, h = resolution
     cmd = [
         str(ffmpeg),
@@ -582,12 +581,9 @@ def _encode_frames_to_mp4(
         "-i", str(frames_dir / "frame_%06d.png"),
         "-vf", f"scale={w}:{h}:flags=lanczos",
         "-c:v", "libx264",
-        # "medium" preset (not "slow"/"tune film") — Railway's container has limited
-        # RAM/CPU; slow's larger lookahead buffers were getting the process OOM-killed
-        # mid-encode (stderr cut off right after FFmpeg opened the output file, the
-        # classic signature of a SIGKILL rather than an FFmpeg-reported error).
-        "-preset", "medium",
-        "-crf", "18",
+        "-preset", preset,
+        "-crf", str(crf),
+        "-threads", str(threads),
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
         str(output_path),
@@ -598,8 +594,39 @@ def _encode_frames_to_mp4(
         return result.returncode == 0, f"[exit code {result.returncode}] {stderr_tail}"
     except FileNotFoundError as exc:
         return False, str(exc)
-    except subprocess.TimeoutExpired:
-        return False, "ffmpeg encode timed out"
+
+
+def _encode_frames_to_mp4(
+    frames_dir: Path,
+    output_path: Path,
+    fps: int,
+    resolution: tuple[int, int],
+) -> tuple[bool, str]:
+    """
+    Use FFmpeg to encode a directory of PNG frames into an MP4. Returns (success, stderr_tail).
+
+    Railway's container has limited RAM/CPU; x264's lookahead/thread buffers scale with
+    preset and thread count, and got the process OOM-killed (SIGKILL, exit code -9) at
+    1080p even on "medium". Try a moderately lean encode first, and if it's killed for
+    a memory-related reason (-9, or any negative/signal exit code), retry once with the
+    leanest possible settings (ultrafast, single thread) before giving up — this never
+    sacrifices correctness, only speed/compression efficiency on retry.
+    """
+    ffmpeg = _find_ffmpeg_executable()
+    if ffmpeg is None:
+        return False, "ffmpeg executable not found"
+
+    success, info = _run_x264_encode(ffmpeg, frames_dir, output_path, fps, resolution, preset="fast", crf=20, threads=2)
+    if success:
+        return True, info
+
+    if "[exit code -9]" in info or "[exit code -" in info:
+        success2, info2 = _run_x264_encode(ffmpeg, frames_dir, output_path, fps, resolution, preset="ultrafast", crf=23, threads=1)
+        if success2:
+            return True, f"Succeeded on low-memory retry after first attempt failed: {info}"
+        return False, f"First attempt: {info} | Retry: {info2}"
+
+    return False, info
 
 
 def _write_fallback_color_video(
@@ -1255,7 +1282,7 @@ def create_export_job(source_job_id: str, resolution_label: str) -> VideoJob | N
         str(ffmpeg), "-y",
         "-i", str(source.output_path),
         "-vf", f"scale={w}:{h}:flags=lanczos",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-threads", "2",
         "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart",
         str(output_path),
