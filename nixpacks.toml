@@ -1,2 +1,11 @@
 [phases.setup]
-nixPkgs = ["ffmpeg", "python312"]
+nixPkgs = ["ffmpeg", "python312", "nodejs_20"]
+
+[phases.install]
+cmds = ["pip install -r backend/requirements.txt", "npm ci"]
+
+[phases.build]
+# Explicit so the React frontend is always rebuilt on deploy — relying on
+# Nixpacks' auto-detected build step left this ambiguous and a prior frontend
+# change didn't show up on the live site.
+cmds = ["npm run build:renderer"]

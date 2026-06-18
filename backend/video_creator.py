@@ -582,17 +582,20 @@ def _encode_frames_to_mp4(
         "-i", str(frames_dir / "frame_%06d.png"),
         "-vf", f"scale={w}:{h}:flags=lanczos",
         "-c:v", "libx264",
-        "-preset", "slow",
+        # "medium" preset (not "slow"/"tune film") — Railway's container has limited
+        # RAM/CPU; slow's larger lookahead buffers were getting the process OOM-killed
+        # mid-encode (stderr cut off right after FFmpeg opened the output file, the
+        # classic signature of a SIGKILL rather than an FFmpeg-reported error).
+        "-preset", "medium",
         "-crf", "18",
-        "-tune", "film",
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
         str(output_path),
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=MAX_DURATION_SECONDS * 2)
-        stderr_tail = result.stderr.decode("utf-8", errors="replace")[-1000:] if result.stderr else ""
-        return result.returncode == 0, stderr_tail
+        stderr_tail = result.stderr.decode("utf-8", errors="replace")[-2000:] if result.stderr else ""
+        return result.returncode == 0, f"[exit code {result.returncode}] {stderr_tail}"
     except FileNotFoundError as exc:
         return False, str(exc)
     except subprocess.TimeoutExpired:
@@ -1252,7 +1255,7 @@ def create_export_job(source_job_id: str, resolution_label: str) -> VideoJob | N
         str(ffmpeg), "-y",
         "-i", str(source.output_path),
         "-vf", f"scale={w}:{h}:flags=lanczos",
-        "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
         "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart",
         str(output_path),
