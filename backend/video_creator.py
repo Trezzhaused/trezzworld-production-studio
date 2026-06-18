@@ -630,7 +630,7 @@ def _run_video_pipeline(job_id: str) -> None:
 
         try:
             for scene_i, scene in enumerate(scenes):
-                scene_duration = min(int(scene.get("duration_seconds", 5)), total_duration - frame_idx // job.fps)
+                scene_duration = min(max(1, round(float(scene.get("duration_seconds", 5)))), total_duration - frame_idx // job.fps)
                 scene_frames = scene_duration * job.fps
 
                 scene_image_path: Path | None = None
@@ -855,6 +855,7 @@ def get_video_output_path(job_id: str) -> Path | None:
         return None
     p = Path(job.output_path)
     return p if p.exists() else None
+
 
 
 
