@@ -609,6 +609,8 @@ class RobloxCreateRequest(BaseModel):
     genre: str = "Adventure"
     maxPlayers: int = 20
     monetization: str = "freemium"
+    universeId: str | None = None
+    placeId: str | None = None
 
 
 @app.post("/api/roblox/game/create")
@@ -616,6 +618,9 @@ def roblox_game_create(payload: RobloxCreateRequest):
     """
     Start an AI-driven Roblox game creation job.
     LUMI generates a full game design document + Luau scripts + Rojo project ZIP.
+    universeId/placeId identify an EXISTING Roblox experience to publish into later —
+    Roblox has no API to create a brand-new experience from scratch, so the user must
+    create an empty Experience via Roblox Studio or the Creator Dashboard first.
     Poll /api/roblox/game/{job_id}/status for progress.
     """
     from .roblox_creator import create_roblox_job  # noqa: PLC0415
@@ -624,6 +629,8 @@ def roblox_game_create(payload: RobloxCreateRequest):
         genre=payload.genre,
         max_players=payload.maxPlayers,
         monetization=payload.monetization,
+        universe_id=payload.universeId,
+        place_id=payload.placeId,
     )
     return job.to_dict()
 
@@ -677,6 +684,36 @@ def roblox_games_list():
     return {"jobs": list_roblox_jobs()}
 
 
+def _resolve_roblox_auth(
+    explicit_api_key: str | None,
+    universe_id_override: str | None,
+    place_id_override: str | None,
+    job_universe_id: str | None,
+    job_place_id: str | None,
+) -> tuple[dict, str, str]:
+    """Resolve (auth_kwargs, universe_id, place_id) for an Open Cloud call — prefers a
+    signed-in Roblox OAuth session over a static admin API key when both are available."""
+    import os  # noqa: PLC0415
+    from .roblox_oauth import get_valid_access_token  # noqa: PLC0415
+    from .roblox_publisher import RobloxPublishError  # noqa: PLC0415
+
+    universe_id = universe_id_override or job_universe_id or os.environ.get("ROBLOX_UNIVERSE_ID")
+    place_id = place_id_override or job_place_id or os.environ.get("ROBLOX_PLACE_ID")
+    if not universe_id or not place_id:
+        raise RobloxPublishError(
+            "No universeId/placeId — set them when creating the game, or provide them now."
+        )
+
+    bearer_token = get_valid_access_token()
+    api_key = explicit_api_key or os.environ.get("ROBLOX_API_KEY")
+    if not bearer_token and not api_key:
+        raise RobloxPublishError(
+            "No Roblox credentials — sign in with Roblox, or configure ROBLOX_API_KEY."
+        )
+    auth_kwargs = {"bearer_token": bearer_token} if bearer_token else {"api_key": api_key}
+    return auth_kwargs, str(universe_id), str(place_id)
+
+
 class RobloxPublishRequest(BaseModel):
     apiKey: str | None = None
     universeId: str | None = None
@@ -689,18 +726,13 @@ def roblox_game_publish(job_id: str, payload: RobloxPublishRequest):
     Publish a completed Roblox game job's generated scripts to a live Roblox
     experience via the Roblox Open Cloud API.
 
-    Requires a Roblox Open Cloud API key with universe-places:write scope
-    (https://create.roblox.com/credentials), plus the target universe and
-    place ID. Pass them in the request body, or set ROBLOX_API_KEY /
-    ROBLOX_UNIVERSE_ID / ROBLOX_PLACE_ID as environment variables.
+    Uses the signed-in Roblox OAuth session (see /api/roblox/oauth/login) if
+    available, otherwise falls back to a static ROBLOX_API_KEY. Uses the
+    universeId/placeId stored on the job (set at creation time) unless
+    overridden in the request body.
     """
     from .roblox_creator import get_roblox_job  # noqa: PLC0415
-    from .roblox_publisher import (  # noqa: PLC0415
-        RobloxPublishError,
-        build_place_xml,
-        get_roblox_credentials,
-        publish_place,
-    )
+    from .roblox_publisher import RobloxPublishError, build_place_xml, publish_place  # noqa: PLC0415
 
     job = get_roblox_job(job_id)
     if job is None:
@@ -709,8 +741,8 @@ def roblox_game_publish(job_id: str, payload: RobloxPublishRequest):
         raise HTTPException(status_code=409, detail=f"Game scripts not ready yet. Status: {job.status}")
 
     try:
-        api_key, universe_id, place_id = get_roblox_credentials(
-            payload.apiKey, payload.universeId, payload.placeId
+        auth_kwargs, universe_id, place_id = _resolve_roblox_auth(
+            payload.apiKey, payload.universeId, payload.placeId, job.universe_id, job.place_id
         )
     except RobloxPublishError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -719,7 +751,7 @@ def roblox_game_publish(job_id: str, payload: RobloxPublishRequest):
     place_xml = build_place_xml(title, job.scripts)
 
     try:
-        result = publish_place(place_xml, api_key, universe_id, place_id)
+        result = publish_place(place_xml, universe_id, place_id, **auth_kwargs)
     except RobloxPublishError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -730,6 +762,121 @@ def roblox_game_publish(job_id: str, payload: RobloxPublishRequest):
         "versionNumber": result.get("versionNumber"),
         "published": True,
     }
+
+
+# ---------------------------------------------------------------------------
+# Roblox OAuth2 — "Sign in with Roblox"
+# ---------------------------------------------------------------------------
+
+@app.get("/api/roblox/oauth/login")
+def roblox_oauth_login():
+    """Redirect to Roblox's authorization page to sign in with a Roblox account."""
+    from fastapi.responses import RedirectResponse  # noqa: PLC0415
+    from .roblox_oauth import RobloxOAuthError, build_authorize_url  # noqa: PLC0415
+    try:
+        url = build_authorize_url()
+    except RobloxOAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(url)
+
+
+@app.get("/api/roblox/oauth/callback")
+def roblox_oauth_callback(code: str = "", state: str = "", error: str = ""):
+    """Roblox redirects here after the user approves/denies the sign-in request."""
+    from fastapi.responses import RedirectResponse  # noqa: PLC0415
+    from .roblox_oauth import RobloxOAuthError, handle_callback  # noqa: PLC0415
+
+    if error:
+        return RedirectResponse(f"/?tab=roblox&robloxAuth=error&reason={error}")
+    try:
+        handle_callback(code, state)
+    except RobloxOAuthError as exc:
+        return RedirectResponse(f"/?tab=roblox&robloxAuth=error&reason={exc}")
+    return RedirectResponse("/?tab=roblox&robloxAuth=success")
+
+
+@app.get("/api/roblox/oauth/status")
+def roblox_oauth_status():
+    """Whether a Roblox account is currently connected via OAuth, and basic identity."""
+    from .roblox_oauth import get_status  # noqa: PLC0415
+    return get_status()
+
+
+@app.post("/api/roblox/oauth/logout")
+def roblox_oauth_logout():
+    """Disconnect the signed-in Roblox account."""
+    from .roblox_oauth import clear_tokens  # noqa: PLC0415
+    clear_tokens()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Roblox Monetization — Game Passes & Developer Products (beta Open Cloud APIs)
+# ---------------------------------------------------------------------------
+
+class RobloxMonetizationRequest(BaseModel):
+    name: str
+    price: int
+    description: str = ""
+    apiKey: str | None = None
+    universeId: str | None = None
+    placeId: str | None = None
+
+
+@app.post("/api/roblox/game/{job_id}/monetization/game-pass")
+def roblox_create_game_pass(job_id: str, payload: RobloxMonetizationRequest):
+    """Create a Game Pass at a given Robux price point for this game's universe."""
+    from .roblox_creator import get_roblox_job  # noqa: PLC0415
+    from .roblox_publisher import RobloxPublishError, create_game_pass  # noqa: PLC0415
+
+    job = get_roblox_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Roblox job '{job_id}' not found.")
+    try:
+        auth_kwargs, universe_id, _ = _resolve_roblox_auth(
+            payload.apiKey, payload.universeId, payload.placeId, job.universe_id, job.place_id
+        )
+        result = create_game_pass(universe_id, payload.name, payload.price, payload.description, **auth_kwargs)
+    except RobloxPublishError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return result
+
+
+@app.post("/api/roblox/game/{job_id}/monetization/developer-product")
+def roblox_create_developer_product(job_id: str, payload: RobloxMonetizationRequest):
+    """Create a Developer Product at a given Robux price point for this game's universe."""
+    from .roblox_creator import get_roblox_job  # noqa: PLC0415
+    from .roblox_publisher import RobloxPublishError, create_developer_product  # noqa: PLC0415
+
+    job = get_roblox_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Roblox job '{job_id}' not found.")
+    try:
+        auth_kwargs, universe_id, _ = _resolve_roblox_auth(
+            payload.apiKey, payload.universeId, payload.placeId, job.universe_id, job.place_id
+        )
+        result = create_developer_product(universe_id, payload.name, payload.price, payload.description, **auth_kwargs)
+    except RobloxPublishError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return result
+
+
+@app.get("/api/roblox/game/{job_id}/monetization")
+def roblox_list_monetization(job_id: str):
+    """List existing Game Passes and Developer Products for this game's universe."""
+    from .roblox_creator import get_roblox_job  # noqa: PLC0415
+    from .roblox_publisher import RobloxPublishError, list_game_passes, list_developer_products  # noqa: PLC0415
+
+    job = get_roblox_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Roblox job '{job_id}' not found.")
+    try:
+        auth_kwargs, universe_id, _ = _resolve_roblox_auth(None, None, None, job.universe_id, job.place_id)
+        passes = list_game_passes(universe_id, **auth_kwargs)
+        products = list_developer_products(universe_id, **auth_kwargs)
+    except RobloxPublishError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"gamePasses": passes, "developerProducts": products}
 
 
 @app.post("/api/debug/video-test")

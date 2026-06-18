@@ -15,13 +15,18 @@ ROBLOX_API_KEY / ROBLOX_UNIVERSE_ID / ROBLOX_PLACE_ID as environment variables.
 """
 from __future__ import annotations
 
+import json as _json
+import mimetypes
 import os
 import urllib.error
 import urllib.request
+import uuid
 from typing import Any
 from xml.sax.saxutils import escape
 
 _OPEN_CLOUD_BASE = "https://apis.roblox.com/universes/v1"
+_GAME_PASS_BASE = "https://apis.roblox.com/game-passes/v1"
+_DEV_PRODUCT_BASE = "https://apis.roblox.com/developer-products/v2"
 
 # Rojo path prefix -> Roblox service class name
 _SERVICE_MAP: dict[str, str] = {
@@ -59,6 +64,16 @@ def get_roblox_credentials(
             "(or set ROBLOX_API_KEY / ROBLOX_UNIVERSE_ID / ROBLOX_PLACE_ID)."
         )
     return api_key, universe_id, place_id
+
+
+def auth_headers(api_key: str | None = None, bearer_token: str | None = None) -> dict[str, str]:
+    """Build Open Cloud auth headers — prefers an OAuth bearer token (acts on the
+    signed-in user's own account) over a static admin API key when both are given."""
+    if bearer_token:
+        return {"Authorization": f"Bearer {bearer_token}"}
+    if api_key:
+        return {"x-api-key": api_key}
+    raise RobloxPublishError("No Roblox credentials available — sign in with Roblox or configure an API key.")
 
 
 def _script_node(referent: int, name: str, script_type: str, content: str) -> str:
@@ -136,24 +151,117 @@ def build_place_xml(title: str, scripts: list[dict[str, str]]) -> bytes:
 
 def publish_place(
     place_xml: bytes,
-    api_key: str,
     universe_id: str,
     place_id: str,
+    api_key: str | None = None,
+    bearer_token: str | None = None,
     version_type: str = "Published",
 ) -> dict[str, Any]:
-    """Publish a place file to Roblox via the Open Cloud Publish Place API."""
+    """Publish a place file to Roblox via the Open Cloud Publish Place API.
+    Pass either api_key (admin key) or bearer_token (signed-in user's OAuth token)."""
     url = f"{_OPEN_CLOUD_BASE}/{universe_id}/places/{place_id}/versions?versionType={version_type}"
-    headers = {
-        "x-api-key": api_key,
-        "Content-Type": "application/xml",
-    }
+    headers = {**auth_headers(api_key, bearer_token), "Content-Type": "application/xml"}
     req = urllib.request.Request(url, data=place_xml, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
-            import json as _json  # noqa: PLC0415
             return _json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise RobloxPublishError(f"Roblox Open Cloud rejected the publish ({exc.code}): {body}") from exc
     except urllib.error.URLError as exc:
         raise RobloxPublishError(f"Could not reach Roblox Open Cloud: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Monetization — Game Passes & Developer Products (beta Open Cloud APIs)
+# ---------------------------------------------------------------------------
+
+def _encode_multipart(fields: dict[str, str]) -> tuple[bytes, str]:
+    """Build a multipart/form-data body (text fields only — no image upload support yet)."""
+    boundary = uuid.uuid4().hex
+    parts: list[bytes] = []
+    for name, value in fields.items():
+        if value is None:
+            continue
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode("utf-8")
+        )
+    parts.append(f"--{boundary}--\r\n".encode("utf-8"))
+    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
+def _post_multipart(url: str, fields: dict[str, str], headers: dict[str, str]) -> dict[str, Any]:
+    body, content_type = _encode_multipart(fields)
+    req = urllib.request.Request(
+        url, data=body, headers={**headers, "Content-Type": content_type}, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return _json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body_text = exc.read().decode("utf-8", errors="replace")
+        raise RobloxPublishError(f"Roblox Open Cloud rejected the request ({exc.code}): {body_text[:300]}") from exc
+    except urllib.error.URLError as exc:
+        raise RobloxPublishError(f"Could not reach Roblox Open Cloud: {exc}") from exc
+
+
+def create_game_pass(
+    universe_id: str,
+    name: str,
+    price: int,
+    description: str = "",
+    is_for_sale: bool = True,
+    api_key: str | None = None,
+    bearer_token: str | None = None,
+) -> dict[str, Any]:
+    """Create a Game Pass at a given Robux price point (beta Open Cloud API)."""
+    url = f"{_GAME_PASS_BASE}/universes/{universe_id}/game-passes"
+    headers = auth_headers(api_key, bearer_token)
+    return _post_multipart(url, {
+        "name": name,
+        "description": description,
+        "price": str(price),
+        "isForSale": str(is_for_sale).lower(),
+    }, headers)
+
+
+def create_developer_product(
+    universe_id: str,
+    name: str,
+    price: int,
+    description: str = "",
+    is_for_sale: bool = True,
+    api_key: str | None = None,
+    bearer_token: str | None = None,
+) -> dict[str, Any]:
+    """Create a Developer Product at a given Robux price point (beta Open Cloud API)."""
+    url = f"{_DEV_PRODUCT_BASE}/universes/{universe_id}/developer-products"
+    headers = auth_headers(api_key, bearer_token)
+    return _post_multipart(url, {
+        "name": name,
+        "description": description,
+        "price": str(price),
+        "isForSale": str(is_for_sale).lower(),
+    }, headers)
+
+
+def list_game_passes(universe_id: str, api_key: str | None = None, bearer_token: str | None = None) -> dict[str, Any]:
+    url = f"{_GAME_PASS_BASE}/universes/{universe_id}/game-passes/creator"
+    headers = auth_headers(api_key, bearer_token)
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return _json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise RobloxPublishError(f"Could not list game passes ({exc.code}): {exc.read().decode('utf-8', errors='replace')[:300]}") from exc
+
+
+def list_developer_products(universe_id: str, api_key: str | None = None, bearer_token: str | None = None) -> dict[str, Any]:
+    url = f"{_DEV_PRODUCT_BASE}/universes/{universe_id}/developer-products/creator"
+    headers = auth_headers(api_key, bearer_token)
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return _json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise RobloxPublishError(f"Could not list developer products ({exc.code}): {exc.read().decode('utf-8', errors='replace')[:300]}") from exc

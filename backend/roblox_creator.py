@@ -54,6 +54,8 @@ class RobloxJob:
     genre: str
     max_players: int
     monetization: str
+    universe_id: str | None = None
+    place_id: str | None = None
     status: str = "queued"       # queued | designing | scripting | packaging | done | error
     progress: int = 0
     message: str = ""
@@ -71,6 +73,8 @@ class RobloxJob:
             "genre": self.genre,
             "maxPlayers": self.max_players,
             "monetization": self.monetization,
+            "universeId": self.universe_id,
+            "placeId": self.place_id,
             "status": self.status,
             "progress": self.progress,
             "message": self.message,
@@ -94,6 +98,8 @@ class RobloxJob:
             genre=d.get("genre", "Adventure"),
             max_players=d.get("maxPlayers", 20),
             monetization=d.get("monetization", "freemium"),
+            universe_id=d.get("universeId"),
+            place_id=d.get("placeId"),
             status=d.get("status", "done"),
             progress=d.get("progress", 0),
             message=d.get("message", ""),
@@ -688,6 +694,8 @@ def create_roblox_job(
     genre: str = "Adventure",
     max_players: int = 20,
     monetization: str = "freemium",
+    universe_id: str | None = None,
+    place_id: str | None = None,
 ) -> RobloxJob:
     """Create and queue a new Roblox game creation job."""
     from .export_cleanup import sweep_old_exports  # noqa: PLC0415
@@ -700,6 +708,8 @@ def create_roblox_job(
         genre=genre,
         max_players=max(2, min(max_players, 100)),
         monetization=monetization,
+        universe_id=universe_id,
+        place_id=place_id,
     )
     with _LOCK:
         _JOBS[job_id] = job
