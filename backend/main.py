@@ -732,26 +732,16 @@ def roblox_game_publish(job_id: str, payload: RobloxPublishRequest):
     }
 
 
-# ---------------------------------------------------------------------------
-# Static file serving — serve the built React UI at /
-# Must be registered AFTER all API routes so /api/* is not intercepted.
-# ---------------------------------------------------------------------------
-
-_RENDERER_DIR = Path(__file__).parent.parent / "dist" / "renderer"
-if _RENDERER_DIR.is_dir():
-    from fastapi.staticfiles import StaticFiles  # noqa: PLC0415
-    app.mount("/", StaticFiles(directory=str(_RENDERER_DIR), html=True), name="ui")
-
 @app.post("/api/debug/video-test")
 def debug_video_test():
     """Run a minimal FFmpeg encode test on Railway."""
     import subprocess, tempfile, shutil
     from pathlib import Path
-    
+
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         return {"error": "ffmpeg not found"}
-    
+
     # Create a test frame using pure Python (no Pillow needed)
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
@@ -764,16 +754,16 @@ def debug_video_test():
             raw = b'\x00' + bytes([r, g, b]) * w
             idat = zlib.compress(raw * h)
             return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + chunk(b'IDAT', idat) + chunk(b'IEND', b''))
-        
+
         # Write 10 identical frames
         for i in range(10):
             (tmp / f"frame_{i:06d}.png").write_bytes(make_png(320, 240, 255, 0, 0))
-        
+
         out = tmp / "test.mp4"
         cmd = [ffmpeg, "-y", "-framerate", "10", "-i", str(tmp / "frame_%06d.png"),
                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)]
         result = subprocess.run(cmd, capture_output=True, timeout=30)
-        
+
         return {
             "ffmpeg": ffmpeg,
             "returncode": result.returncode,
@@ -781,3 +771,55 @@ def debug_video_test():
             "stderr": result.stderr.decode()[-500:],
             "output_size": out.stat().st_size if out.exists() else 0
         }
+
+
+@app.post("/api/debug/image-test")
+def debug_image_test():
+    """
+    Directly test whichever image-generation API key is configured (Hugging Face, fal.ai,
+    or OpenAI) by generating one real scene image. Use this to see the EXACT failure reason
+    (bad key, model unavailable, rate limited, etc.) without running a full video job.
+    """
+    import os
+    import tempfile
+    from pathlib import Path
+    from .video_generator_patch import generate_scene_image_ai, _get_hf_token, _get_fal_key
+    from .user_key_store import get_user_key_store
+
+    openai_key = os.environ.get("OPENAI_API_KEY") or get_user_key_store().get_key("openai")
+    configured = {
+        "huggingface": _get_hf_token() is not None,
+        "fal": _get_fal_key() is not None,
+        "openai": openai_key is not None,
+    }
+    if not any(configured.values()):
+        return {"ok": False, "configured": configured, "reason": "No image generation API key configured at all."}
+
+    test_scene = {
+        "title": "Debug Test Scene",
+        "visual_description": "a red apple sitting on a wooden table, soft window light",
+        "camera_motion": "static shot",
+        "color_grade": "warm golden",
+    }
+    with tempfile.TemporaryDirectory() as tmpdir:
+        target = Path(tmpdir) / "test.png"
+        ok, reason = generate_scene_image_ai(test_scene, "Debug Test", "cinematic", (1024, 1024), target)
+        image_size = target.stat().st_size if ok and target.exists() else 0
+
+    return {
+        "ok": ok,
+        "configured": configured,
+        "reason": reason,
+        "imageBytes": image_size,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Static file serving — serve the built React UI at /
+# Must be registered AFTER all API routes so /api/* is not intercepted.
+# ---------------------------------------------------------------------------
+
+_RENDERER_DIR = Path(__file__).parent.parent / "dist" / "renderer"
+if _RENDERER_DIR.is_dir():
+    from fastapi.staticfiles import StaticFiles  # noqa: PLC0415
+    app.mount("/", StaticFiles(directory=str(_RENDERER_DIR), html=True), name="ui")

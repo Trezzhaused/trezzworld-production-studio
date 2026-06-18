@@ -264,6 +264,8 @@ class VideoJob:
     storyboard: dict[str, Any] = field(default_factory=dict)
     output_path: str | None = None
     error: str | None = None
+    warnings: list[str] = field(default_factory=list)
+    used_photorealistic: bool = False
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -285,6 +287,8 @@ class VideoJob:
             "outputPath": self.output_path,
             "downloadReady": self.output_path is not None and Path(self.output_path).exists(),
             "error": self.error,
+            "warnings": self.warnings,
+            "usedPhotorealistic": self.used_photorealistic,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
         }
@@ -924,6 +928,7 @@ def _run_video_pipeline(job_id: str) -> None:
                         api_key=image_api_info[1],
                     )
                     if image_ok:
+                        job.used_photorealistic = True
                         if _PIL_AVAILABLE:
                             try:
                                 from PIL import Image  # noqa: PLC0415
@@ -932,10 +937,12 @@ def _run_video_pipeline(job_id: str) -> None:
                                 scene_base_image = None
                     else:
                         scene_image_path = None
+                        warning = f"Scene {scene_i + 1}: AI image generation failed ({image_fail_reason[:300]})"
+                        job.warnings.append(warning)
                         update(
                             "rendering",
                             25 + int(10 * (scene_i + 1) / max(len(scenes), 1)),
-                            f"Scene {scene_i + 1}: AI image generation failed ({image_fail_reason[:300]}), using fallback renderer.",
+                            f"{warning}, using fallback renderer.",
                         )
 
                 for fi in range(scene_frames):
@@ -1039,7 +1046,13 @@ def _run_video_pipeline(job_id: str) -> None:
         # Clean up frames
         shutil.rmtree(frames_dir.parent, ignore_errors=True)
 
-        update("done", 100, f"MP4 ready: {output_path.name}")
+        if use_photorealistic and not job.used_photorealistic:
+            done_message = f"MP4 ready: {output_path.name} — but AI image generation failed for every scene; see warnings below."
+        elif use_photorealistic:
+            done_message = f"MP4 ready: {output_path.name} (photorealistic AI frames)"
+        else:
+            done_message = f"MP4 ready: {output_path.name} (no image API key configured — used built-in renderer)"
+        update("done", 100, done_message)
         job.output_path = str(output_path)
 
     except Exception as exc:  # noqa: BLE001

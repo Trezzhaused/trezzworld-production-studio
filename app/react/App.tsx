@@ -19,6 +19,8 @@ interface VideoJob {
   downloadReady: boolean;
   outputPath?: string;
   error?: string;
+  warnings?: string[];
+  usedPhotorealistic?: boolean;
   storyboard?: any;
   hoursUntilArchive?: number;
 }
@@ -294,6 +296,32 @@ function VideoEditor({ job, onJobCreated }: { job: VideoJob; onJobCreated?: (job
           </a>
         )}
       </div>
+
+      {/* Image generation status — why this video looks like it does */}
+      {job.status === "done" && (
+        <div style={{
+          marginBottom: 12, padding: "8px 12px", borderRadius: 6, fontSize: 11,
+          background: job.usedPhotorealistic ? "#052e1622" : "#78350f22",
+          border: `1px solid ${job.usedPhotorealistic ? "#22c55e44" : "#f59e0b44"}`,
+          color: job.usedPhotorealistic ? "#86efac" : "#fbbf24",
+        }}>
+          {job.usedPhotorealistic
+            ? "✓ Rendered with AI-generated photorealistic frames."
+            : "⚠ Rendered with the built-in text-card renderer (no AI frames succeeded). Check Settings → Test Image Generation to see why."}
+        </div>
+      )}
+      {job.warnings && job.warnings.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ color: "#64748b", fontSize: 11, marginBottom: 4 }}>WARNINGS</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 120, overflowY: "auto" }}>
+            {job.warnings.map((w, i) => (
+              <div key={i} style={{ background: "#0f172a", borderRadius: 4, padding: "6px 10px", color: "#94a3b8", fontSize: 11 }}>
+                {w}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Storyboard scenes — reorderable */}
       {scenes.length > 0 && (
@@ -1016,6 +1044,8 @@ function SettingsTab() {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<any>(null);
 
   const load = async () => {
     try {
@@ -1048,6 +1078,19 @@ function SettingsTab() {
       setMessage("Failed to save key — check your connection.");
     } finally {
       setSaving(null);
+    }
+  };
+
+  const testImageGeneration = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch(`${API}/debug/image-test`, { method: "POST" });
+      setTestResult(await res.json());
+    } catch (err) {
+      setTestResult({ ok: false, reason: "Request failed — check your connection." });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -1106,6 +1149,36 @@ function SettingsTab() {
             </div>
           </div>
         ))}
+      </div>
+
+      <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 8, padding: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 700 }}>🧪 Test Image Generation</div>
+          <button onClick={testImageGeneration} disabled={testing} style={btnStyle(!testing)}>
+            {testing ? "Testing..." : "Run Test"}
+          </button>
+        </div>
+        <div style={{ color: "#64748b", fontSize: 11, marginBottom: 8 }}>
+          Generates one real test image using whichever key is configured above, and shows
+          the exact result — use this to confirm a key actually works without running a full video.
+        </div>
+        {testResult && (
+          <div style={{
+            background: testResult.ok ? "#052e1622" : "#7f1d1d22",
+            border: `1px solid ${testResult.ok ? "#22c55e44" : "#ef444444"}`,
+            borderRadius: 6, padding: "8px 12px", fontSize: 11,
+            color: testResult.ok ? "#86efac" : "#fca5a5",
+          }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>{testResult.ok ? "✓ Success" : "✗ Failed"}</div>
+            {testResult.configured && (
+              <div style={{ color: "#64748b", marginBottom: 4 }}>
+                Configured: {Object.entries(testResult.configured).filter(([, v]) => v).map(([k]) => k).join(", ") || "none"}
+              </div>
+            )}
+            {testResult.reason && <div>{testResult.reason}</div>}
+            {testResult.ok && <div>Generated {testResult.imageBytes} bytes.</div>}
+          </div>
+        )}
       </div>
     </div>
   );
