@@ -69,7 +69,10 @@ _SD_MODELS: dict[str, dict[str, str]] = {
     },
 }
 
-_HF_BASE = "https://api-inference.huggingface.co/models"
+# Hugging Face retired the legacy api-inference.huggingface.co domain (it no longer
+# resolves at all — confirmed via direct DNS/connection test) in favor of routing
+# through Inference Providers. "hf-inference" is HF's own first-party provider.
+_HF_BASE = "https://router.huggingface.co/hf-inference/models"
 
 _NEGATIVE_PROMPTS: dict[str, str] = {
     "cinematic":   "cartoon, anime, painting, illustration, blurry, low quality, text, watermark, oversaturated",
@@ -187,14 +190,14 @@ def _call_wan_fal(
     image_size: str = "landscape_16_9",
     num_frames: int = 24,
     fal_key: str | None = None,
-) -> bytes | None:
+) -> tuple[bytes | None, str]:
     """
     Generate video frame via Wan 2.2 text-to-video on fal.ai.
-    Returns first frame as image bytes.
+    Returns (first frame as image bytes or None, diagnostic reason on failure).
     Uses fal-ai/wan/t2v-1.3b endpoint.
     """
     if not fal_key:
-        return None
+        return None, "fal.ai: no key configured"
 
     payload = json.dumps({
         "prompt": prompt,
@@ -209,7 +212,6 @@ def _call_wan_fal(
         "Content-Type": "application/json",
     }
 
-    # Submit job
     req = urllib.request.Request(
         "https://queue.fal.run/fal-ai/wan/t2v-1.3b",
         data=payload,
@@ -221,9 +223,8 @@ def _call_wan_fal(
             data = json.loads(resp.read())
             request_id = data.get("request_id")
             if not request_id:
-                return None
+                return None, f"fal.ai Wan: submit response had no request_id: {data}"
 
-        # Poll for result
         status_url = f"https://queue.fal.run/fal-ai/wan/t2v-1.3b/requests/{request_id}/status"
         result_url = f"https://queue.fal.run/fal-ai/wan/t2v-1.3b/requests/{request_id}"
 
@@ -238,15 +239,16 @@ def _call_wan_fal(
                         result_data = json.loads(resp.read())
                         video_url = result_data.get("video", {}).get("url")
                         if video_url:
-                            # Download first frame thumbnail or video
                             with urllib.request.urlopen(video_url, timeout=60) as vresp:
-                                return vresp.read()
-                    break
+                                return vresp.read(), ""
+                        return None, f"fal.ai Wan: completed but no video URL: {result_data}"
                 elif status_data.get("status") == "FAILED":
-                    return None
-    except Exception:
-        return None
-    return None
+                    return None, f"fal.ai Wan: job failed: {status_data}"
+        return None, "fal.ai Wan: polling timed out after 5 minutes"
+    except urllib.error.HTTPError as exc:
+        return None, f"fal.ai Wan: HTTP {exc.code}: {exc.read().decode('utf-8', errors='replace')[:300]}"
+    except Exception as exc:
+        return None, f"fal.ai Wan: {exc}"
 
 
 # ── Kling via fal.ai ──────────────────────────────────────────────────────────
@@ -256,19 +258,22 @@ def _call_kling_fal(
     duration: str = "5",
     aspect_ratio: str = "16:9",
     fal_key: str | None = None,
-) -> bytes | None:
+) -> tuple[bytes | None, str]:
     """
     Generate video via Kling 2.1 on fal.ai.
-    Returns video bytes or None.
+    Returns (video bytes or None, diagnostic reason on failure).
     """
     if not fal_key:
-        return None
+        return None, "fal.ai: no key configured"
 
     payload = json.dumps({
         "prompt": prompt,
         "duration": duration,
         "aspect_ratio": aspect_ratio,
-        "mode": "pro",
+        # Must match the endpoint path below ("standard") — a prior change set
+        # this to "pro" while the URL still pointed at the standard endpoint,
+        # a mismatch that fal.ai likely rejected outright.
+        "mode": "standard",
     }).encode("utf-8")
 
     headers = {
@@ -287,7 +292,7 @@ def _call_kling_fal(
             data = json.loads(resp.read())
             request_id = data.get("request_id")
             if not request_id:
-                return None
+                return None, f"fal.ai Kling: submit response had no request_id: {data}"
 
         status_url = f"https://queue.fal.run/fal-ai/kling-video/v2.1/standard/text-to-video/requests/{request_id}/status"
         result_url = f"https://queue.fal.run/fal-ai/kling-video/v2.1/standard/text-to-video/requests/{request_id}"
@@ -306,13 +311,15 @@ def _call_kling_fal(
                             video_url = videos[0].get("url") if isinstance(videos, list) else videos.get("url")
                             if video_url:
                                 with urllib.request.urlopen(video_url, timeout=60) as vresp:
-                                    return vresp.read()
-                    break
+                                    return vresp.read(), ""
+                        return None, f"fal.ai Kling: completed but no video URL: {result_data}"
                 elif status_data.get("status") == "FAILED":
-                    return None
-    except Exception:
-        return None
-    return None
+                    return None, f"fal.ai Kling: job failed: {status_data}"
+        return None, "fal.ai Kling: polling timed out after 6 minutes"
+    except urllib.error.HTTPError as exc:
+        return None, f"fal.ai Kling: HTTP {exc.code}: {exc.read().decode('utf-8', errors='replace')[:300]}"
+    except Exception as exc:
+        return None, f"fal.ai Kling: {exc}"
 
 
 # ── Master generator function ─────────────────────────────────────────────────
@@ -394,17 +401,19 @@ def generate_scene_image_ai(
     # ── Attempt 3: Wan 2.2 via fal.ai ─────────────────────────────────────
     if fal_key:
         aspect = "landscape_16_9" if w >= h else "portrait_16_9"
-        wan_bytes = _call_wan_fal(base_prompt, image_size=aspect, fal_key=fal_key)
+        wan_bytes, wan_err = _call_wan_fal(base_prompt, image_size=aspect, fal_key=fal_key)
         if wan_bytes and _save_image_to_path(wan_bytes, target_path, resolution):
             return True, ""
-        errors.append("fal.ai Wan 2.2: no result (see server logs)")
+        if wan_err:
+            errors.append(wan_err)
 
         # ── Attempt 4: Kling 2.1 via fal.ai ──────────────────────────────
         kling_ratio = "16:9" if w >= h else "9:16"
-        kling_bytes = _call_kling_fal(base_prompt, aspect_ratio=kling_ratio, fal_key=fal_key)
+        kling_bytes, kling_err = _call_kling_fal(base_prompt, aspect_ratio=kling_ratio, fal_key=fal_key)
         if kling_bytes and _save_image_to_path(kling_bytes, target_path, resolution):
             return True, ""
-        errors.append("fal.ai Kling 2.1: no result (see server logs)")
+        if kling_err:
+            errors.append(kling_err)
 
     return False, " | ".join(errors) if errors else "No image generator produced a usable result."
 

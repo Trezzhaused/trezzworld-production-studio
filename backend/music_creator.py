@@ -54,12 +54,16 @@ _SAMPLE_RATE = 32000
 _LOCK = threading.Lock()
 _JOBS: dict[str, "MusicJob"] = {}
 
-# HuggingFace Inference API endpoints
-_HF_MUSICGEN_URL = "https://api-inference.huggingface.co/models/facebook/musicgen-small"
-_HF_MUSICGEN_MEDIUM_URL = "https://api-inference.huggingface.co/models/facebook/musicgen-medium"
-_HF_MUSICGEN_LARGE_URL = "https://api-inference.huggingface.co/models/facebook/musicgen-large"
-_HF_RIFFUSION_URL = "https://api-inference.huggingface.co/models/riffusion/riffusion-model-v1"
-_HF_AUDIOGEN_URL = "https://api-inference.huggingface.co/models/facebook/audiogen-medium"
+# HuggingFace Inference API endpoints — routed through Inference Providers.
+# The legacy api-inference.huggingface.co domain no longer resolves at all
+# (confirmed via direct DNS/connection test); "hf-inference" is HF's own
+# first-party provider, same models, new host.
+_HF_BASE = "https://router.huggingface.co/hf-inference/models"
+_HF_MUSICGEN_URL = f"{_HF_BASE}/facebook/musicgen-small"
+_HF_MUSICGEN_MEDIUM_URL = f"{_HF_BASE}/facebook/musicgen-medium"
+_HF_MUSICGEN_LARGE_URL = f"{_HF_BASE}/facebook/musicgen-large"
+_HF_RIFFUSION_URL = f"{_HF_BASE}/riffusion/riffusion-model-v1"
+_HF_AUDIOGEN_URL = f"{_HF_BASE}/facebook/audiogen-medium"
 
 # Music engine choices exposed to frontend
 MUSIC_ENGINES = {
