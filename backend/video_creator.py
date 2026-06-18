@@ -821,11 +821,15 @@ def _run_video_pipeline(job_id: str) -> None:
         job.updated_at = time.time()
 
     try:
-        # Step 1: Generate storyboard
-        update("generating_storyboard", 5, "LUMI is generating the storyboard…")
-        storyboard = _generate_storyboard(job)
-        job.storyboard = storyboard
-        update("generating_storyboard", 20, f"Storyboard ready: {len(storyboard.get('scenes', []))} scenes")
+        # Step 1: Generate storyboard (skipped if a REWORK-iT re-render supplied one already)
+        if job.storyboard and job.storyboard.get("scenes"):
+            storyboard = job.storyboard
+            update("generating_storyboard", 20, f"Using edited storyboard: {len(storyboard.get('scenes', []))} scenes")
+        else:
+            update("generating_storyboard", 5, "LUMI is generating the storyboard…")
+            storyboard = _generate_storyboard(job)
+            job.storyboard = storyboard
+            update("generating_storyboard", 20, f"Storyboard ready: {len(storyboard.get('scenes', []))} scenes")
 
         scenes = storyboard.get("scenes", [])
         if not scenes:
@@ -1087,8 +1091,16 @@ def create_video_job(
     narrate: bool = True,
     narrator_voice: str = "en-US-female",
     include_music: bool = True,
+    storyboard_override: dict[str, Any] | None = None,
 ) -> VideoJob:
-    """Create and queue a new video generation job."""
+    """
+    Create and queue a new video generation job.
+
+    storyboard_override skips AI storyboard generation and renders the given
+    storyboard directly — used by REWORK-iT's re-render flow to apply edits
+    (reordered/edited scenes, regenerated images) without paying for a fresh
+    AI storyboard call.
+    """
     # Clamp duration
     duration_seconds = max(5, min(duration_seconds, MAX_DURATION_SECONDS))
 
@@ -1114,6 +1126,8 @@ def create_video_job(
         narrator_voice=narrator_voice,
         include_music=include_music,
     )
+    if storyboard_override:
+        job.storyboard = storyboard_override
 
     with _LOCK:
         _JOBS[job_id] = job
@@ -1122,6 +1136,148 @@ def create_video_job(
     thread = threading.Thread(target=_run_video_pipeline, args=(job_id,), daemon=True)
     thread.start()
 
+    return job
+
+
+# ---------------------------------------------------------------------------
+# REWORK-iT — lightweight, server-driven edits on an already-rendered video
+# ---------------------------------------------------------------------------
+
+def create_rerender_job(
+    source_job_id: str,
+    storyboard_override: dict[str, Any] | None = None,
+    narrate: bool | None = None,
+    narrator_voice: str | None = None,
+    include_music: bool | None = None,
+) -> VideoJob | None:
+    """Re-render a video from an edited storyboard (reordered/edited scenes), reusing
+    the source job's concept/style/resolution/fps. Returns a new job, or None if the
+    source job doesn't exist."""
+    source = get_video_job(source_job_id)
+    if source is None:
+        return None
+
+    resolution_label = next(
+        (label for label, res in {
+            "4k": (3840, 2160), "1080p": (1920, 1080), "720p": (1280, 720),
+            "vertical": (1080, 1920), "square": (1080, 1080),
+        }.items() if res == source.resolution),
+        "1080p",
+    )
+
+    return create_video_job(
+        concept=source.concept,
+        duration_seconds=source.duration_seconds,
+        style=source.style,
+        resolution_label=resolution_label,
+        fps=source.fps,
+        narrate=narrate if narrate is not None else source.narrate,
+        narrator_voice=narrator_voice or source.narrator_voice,
+        include_music=include_music if include_music is not None else source.include_music,
+        storyboard_override=storyboard_override or source.storyboard,
+    )
+
+
+def create_trim_job(source_job_id: str, start_seconds: float, end_seconds: float) -> VideoJob | None:
+    """Trim a completed video's final MP4 to [start_seconds, end_seconds] via a fast
+    stream-copy ffmpeg cut (no re-encode). Returns a new, already-done job, or None."""
+    source = get_video_job(source_job_id)
+    if source is None or source.output_path is None or not Path(source.output_path).exists():
+        return None
+
+    ffmpeg = _find_ffmpeg_executable()
+    if ffmpeg is None:
+        return None
+
+    export_root = _resolve_video_export_dir()
+    job_id = str(uuid.uuid4())
+    output_path = export_root / f"{job_id}.mp4"
+    duration = max(0.5, end_seconds - start_seconds)
+
+    cmd = [
+        str(ffmpeg), "-y",
+        "-ss", str(max(0.0, start_seconds)),
+        "-i", str(source.output_path),
+        "-t", str(duration),
+        "-c", "copy",
+        str(output_path),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=120)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0 or not output_path.exists():
+        return None
+
+    job = VideoJob(
+        job_id=job_id,
+        concept=f"{source.concept} (trimmed {start_seconds:.1f}s–{end_seconds:.1f}s)",
+        duration_seconds=int(duration),
+        style=source.style,
+        resolution=source.resolution,
+        fps=source.fps,
+        status="done",
+        progress=100,
+        message="Trimmed from source video.",
+        output_path=str(output_path),
+    )
+    with _LOCK:
+        _JOBS[job_id] = job
+    return job
+
+
+def create_export_job(source_job_id: str, resolution_label: str) -> VideoJob | None:
+    """Re-encode a completed video's final MP4 to a different resolution. Returns a new,
+    already-done job, or None."""
+    source = get_video_job(source_job_id)
+    if source is None or source.output_path is None or not Path(source.output_path).exists():
+        return None
+
+    ffmpeg = _find_ffmpeg_executable()
+    if ffmpeg is None:
+        return None
+
+    res_map = {
+        "4k": (3840, 2160), "1080p": (1920, 1080), "720p": (1280, 720),
+        "vertical": (1080, 1920), "square": (1080, 1080),
+    }
+    resolution = res_map.get(resolution_label.lower(), (1920, 1080))
+    w, h = resolution
+
+    export_root = _resolve_video_export_dir()
+    job_id = str(uuid.uuid4())
+    output_path = export_root / f"{job_id}.mp4"
+
+    cmd = [
+        str(ffmpeg), "-y",
+        "-i", str(source.output_path),
+        "-vf", f"scale={w}:{h}:flags=lanczos",
+        "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart",
+        str(output_path),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=MAX_DURATION_SECONDS * 2)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0 or not output_path.exists():
+        return None
+
+    job = VideoJob(
+        job_id=job_id,
+        concept=f"{source.concept} ({resolution_label} export)",
+        duration_seconds=source.duration_seconds,
+        style=source.style,
+        resolution=resolution,
+        fps=source.fps,
+        status="done",
+        progress=100,
+        message=f"Exported at {resolution_label}.",
+        output_path=str(output_path),
+    )
+    with _LOCK:
+        _JOBS[job_id] = job
     return job
 
 

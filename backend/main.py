@@ -416,6 +416,68 @@ def video_jobs():
 
 
 # ---------------------------------------------------------------------------
+# REWORK-iT — lightweight, server-driven edits on an already-rendered video
+# ---------------------------------------------------------------------------
+
+class VideoRerenderRequest(BaseModel):
+    storyboard: dict | None = None
+    narrate: bool | None = None
+    narratorVoice: str | None = None
+    includeMusic: bool | None = None
+
+
+@app.post("/api/video/{job_id}/rerender")
+def video_rerender(job_id: str, payload: VideoRerenderRequest):
+    """
+    Re-render a video from an edited storyboard (reordered scenes, edited narration/visual
+    text, swapped voice or music) without paying for a new AI storyboard call. Omit
+    `storyboard` to just change narration/music settings and re-render the same scenes.
+    """
+    from .video_creator import create_rerender_job  # noqa: PLC0415
+    job = create_rerender_job(
+        source_job_id=job_id,
+        storyboard_override=payload.storyboard,
+        narrate=payload.narrate,
+        narrator_voice=payload.narratorVoice,
+        include_music=payload.includeMusic,
+    )
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Video job '{job_id}' not found.")
+    return job.to_dict()
+
+
+class VideoTrimRequest(BaseModel):
+    startSeconds: float
+    endSeconds: float
+
+
+@app.post("/api/video/{job_id}/trim")
+def video_trim(job_id: str, payload: VideoTrimRequest):
+    """Trim a completed video to [startSeconds, endSeconds] via a fast stream-copy cut."""
+    from .video_creator import create_trim_job  # noqa: PLC0415
+    if payload.endSeconds <= payload.startSeconds:
+        raise HTTPException(status_code=400, detail="endSeconds must be greater than startSeconds.")
+    job = create_trim_job(job_id, payload.startSeconds, payload.endSeconds)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Source video not ready, not found, or FFmpeg unavailable.")
+    return job.to_dict()
+
+
+class VideoExportRequest(BaseModel):
+    resolution: str = "1080p"
+
+
+@app.post("/api/video/{job_id}/export")
+def video_export(job_id: str, payload: VideoExportRequest):
+    """Re-encode a completed video to a different resolution (e.g. upscale 720p -> 4k)."""
+    from .video_creator import create_export_job  # noqa: PLC0415
+    job = create_export_job(job_id, payload.resolution)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Source video not ready, not found, or FFmpeg unavailable.")
+    return job.to_dict()
+
+
+# ---------------------------------------------------------------------------
 # Music Generator — AI composition briefs
 # ---------------------------------------------------------------------------
 

@@ -89,12 +89,80 @@ function ProgressBar({ value, color = "#38bdf8" }: { value: number; color?: stri
 
 // ── Video Editor Panel ────────────────────────────────────────────────────────
 
-function VideoEditor({ job }: { job: VideoJob }) {
+function VideoEditor({ job, onJobCreated }: { job: VideoJob; onJobCreated?: (job: VideoJob) => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
+  const [scenes, setScenes] = useState<any[]>(job.storyboard?.scenes ?? []);
+  const [trimStart, setTrimStart] = useState(0);
+  const [trimEnd, setTrimEnd] = useState(0);
+  const [exportRes, setExportRes] = useState("1080p");
+  const [reworkBusy, setReworkBusy] = useState<string | null>(null);
+
+  useEffect(() => { setScenes(job.storyboard?.scenes ?? []); }, [job.jobId]);
+
+  const moveScene = (i: number, dir: -1 | 1) => {
+    const next = [...scenes];
+    const j = i + dir;
+    if (j < 0 || j >= next.length) return;
+    [next[i], next[j]] = [next[j], next[i]];
+    setScenes(next);
+  };
+
+  const rerender = async () => {
+    setReworkBusy("rerender");
+    try {
+      const res = await fetch(`${API}/video/${job.jobId}/rerender`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storyboard: { ...job.storyboard, scenes } }),
+      });
+      const newJob: VideoJob = await res.json();
+      onJobCreated?.(newJob);
+    } catch (err) {
+      console.error("Re-render failed:", err);
+    } finally {
+      setReworkBusy(null);
+    }
+  };
+
+  const trim = async () => {
+    setReworkBusy("trim");
+    try {
+      const res = await fetch(`${API}/video/${job.jobId}/trim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ startSeconds: trimStart, endSeconds: trimEnd }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const newJob: VideoJob = await res.json();
+      onJobCreated?.(newJob);
+    } catch (err) {
+      console.error("Trim failed:", err);
+    } finally {
+      setReworkBusy(null);
+    }
+  };
+
+  const exportAs = async () => {
+    setReworkBusy("export");
+    try {
+      const res = await fetch(`${API}/video/${job.jobId}/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resolution: exportRes }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const newJob: VideoJob = await res.json();
+      onJobCreated?.(newJob);
+    } catch (err) {
+      console.error("Export failed:", err);
+    } finally {
+      setReworkBusy(null);
+    }
+  };
 
   const downloadUrl = job.downloadReady
     ? `${API}/video/${job.jobId}/download`
@@ -115,7 +183,10 @@ function VideoEditor({ job }: { job: VideoJob }) {
   };
 
   const onLoadedMetadata = () => {
-    if (videoRef.current) setDuration(videoRef.current.duration);
+    if (videoRef.current) {
+      setDuration(videoRef.current.duration);
+      setTrimEnd((prev) => prev || videoRef.current!.duration);
+    }
   };
 
   const seek = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -197,23 +268,70 @@ function VideoEditor({ job }: { job: VideoJob }) {
         )}
       </div>
 
-      {/* Storyboard scenes */}
-      {job.storyboard?.scenes?.length > 0 && (
-        <div>
-          <div style={{ color: "#64748b", fontSize: 11, marginBottom: 6 }}>STORYBOARD SCENES</div>
+      {/* Storyboard scenes — reorderable */}
+      {scenes.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ color: "#64748b", fontSize: 11, marginBottom: 6 }}>STORYBOARD SCENES (drag order with ▲▼, then Re-render)</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 160, overflowY: "auto" }}>
-            {job.storyboard.scenes.slice(0, 10).map((scene: any, i: number) => (
+            {scenes.map((scene: any, i: number) => (
               <div key={i} style={{
                 background: "#0f172a", borderRadius: 4, padding: "6px 10px",
-                display: "flex", justifyContent: "space-between", alignItems: "center",
+                display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
               }}>
-                <div>
+                <div style={{ flex: 1 }}>
                   <div style={{ color: "#94a3b8", fontSize: 12, fontWeight: 600 }}>{scene.title}</div>
                   <div style={{ color: "#475569", fontSize: 11 }}>{(scene.visual_description || "").slice(0, 60)}...</div>
                 </div>
                 <div style={{ color: "#38bdf8", fontSize: 11 }}>{scene.duration_seconds}s</div>
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <button onClick={() => moveScene(i, -1)} disabled={i === 0} style={{ ...btnStyle(i !== 0), padding: "1px 6px", fontSize: 10 }}>▲</button>
+                  <button onClick={() => moveScene(i, 1)} disabled={i === scenes.length - 1} style={{ ...btnStyle(i !== scenes.length - 1), padding: "1px 6px", fontSize: 10 }}>▼</button>
+                </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* REWORK-iT — lightweight server-driven edits */}
+      {job.status === "done" && (
+        <div style={{ borderTop: "1px solid #1e3a5f", paddingTop: 12 }}>
+          <div style={{ color: "#a855f7", fontSize: 11, marginBottom: 8, fontWeight: 700, letterSpacing: 1 }}>
+            ⚒ REWORK-iT
+          </div>
+
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+            <button onClick={rerender} disabled={reworkBusy !== null} style={btnStyle(reworkBusy === null)}>
+              {reworkBusy === "rerender" ? "⏳ Re-rendering..." : "🔁 Re-render with edited scenes"}
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+            <span style={{ color: "#64748b", fontSize: 11 }}>Trim</span>
+            <input type="number" value={trimStart} min={0} max={duration} step={0.5}
+              onChange={(e) => setTrimStart(parseFloat(e.target.value) || 0)}
+              style={{ ...inputStyle, width: 60 }} />
+            <span style={{ color: "#475569", fontSize: 11 }}>to</span>
+            <input type="number" value={trimEnd} min={0} max={duration} step={0.5}
+              onChange={(e) => setTrimEnd(parseFloat(e.target.value) || 0)}
+              style={{ ...inputStyle, width: 60 }} />
+            <button onClick={trim} disabled={reworkBusy !== null} style={btnStyle(reworkBusy === null)}>
+              {reworkBusy === "trim" ? "⏳..." : "✂ Trim"}
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ color: "#64748b", fontSize: 11 }}>Export as</span>
+            <select value={exportRes} onChange={(e) => setExportRes(e.target.value)} style={{ ...inputStyle, width: 90 }}>
+              <option>720p</option>
+              <option>1080p</option>
+              <option>4k</option>
+              <option>vertical</option>
+              <option>square</option>
+            </select>
+            <button onClick={exportAs} disabled={reworkBusy !== null} style={btnStyle(reworkBusy === null)}>
+              {reworkBusy === "export" ? "⏳..." : "⬇ Export"}
+            </button>
           </div>
         </div>
       )}
@@ -614,7 +732,14 @@ function VideoTab() {
 
       {/* Selected job editor */}
       {selectedJob && (
-        <VideoEditor key={selectedJob.jobId} job={selectedJob} />
+        <VideoEditor
+          key={selectedJob.jobId}
+          job={selectedJob}
+          onJobCreated={(newJob) => {
+            setJobs((prev) => [newJob, ...prev]);
+            setSelectedJob(newJob);
+          }}
+        />
       )}
     </div>
   );
