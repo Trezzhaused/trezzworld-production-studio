@@ -387,7 +387,7 @@ def video_jobs():
 
 
 # ---------------------------------------------------------------------------
-# Music Generator — AI composition briefs
+# Music Generator — AI composition briefs + real audio generation
 # ---------------------------------------------------------------------------
 
 class MusicGenerateRequest(BaseModel):
@@ -430,6 +430,71 @@ def music_generate(payload: MusicGenerateRequest):
     }
 
 
+class MusicCreateRequest(BaseModel):
+    concept: str
+    genre: str = "cinematic"
+    durationSeconds: int = 30
+    bpm: int = 120
+    mood: str = "epic"
+
+
+@app.post("/api/music/create")
+def music_create(payload: MusicCreateRequest):
+    """
+    Start an AI music generation job.
+    Uses HuggingFace MusicGen or Replicate to generate a real audio file.
+    Poll /api/music/{job_id}/status for progress, download at /api/music/{job_id}/download.
+    Set HF_API_KEY or REPLICATE_API_TOKEN in backend/.env for real audio generation.
+    """
+    from .music_ai import create_music_job  # noqa: PLC0415
+    job = create_music_job(
+        concept=payload.concept,
+        genre=payload.genre,
+        duration_seconds=payload.durationSeconds,
+        bpm=payload.bpm,
+        mood=payload.mood,
+    )
+    return job.to_dict()
+
+
+@app.get("/api/music/{job_id}/status")
+def music_status(job_id: str):
+    """Poll the status of a music generation job."""
+    from .music_ai import get_music_job  # noqa: PLC0415
+    job = get_music_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Music job '{job_id}' not found.")
+    return job.to_dict()
+
+
+@app.get("/api/music/{job_id}/download")
+def music_download(job_id: str):
+    """Download the generated audio file (WAV/MP3) or composition brief."""
+    from .music_ai import get_music_output_path, get_music_job  # noqa: PLC0415
+    path = get_music_output_path(job_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Music file not ready or job not found.")
+    job = get_music_job(job_id)
+    fmt = job.output_format if job else (path.suffix.lstrip(".") or "wav")
+    media_map = {"wav": "audio/wav", "mp3": "audio/mpeg", "txt": "text/plain"}
+    media_type = media_map.get(fmt, "application/octet-stream")
+    return FileResponse(path=str(path), media_type=media_type, filename=path.name)
+
+
+@app.get("/api/music/jobs")
+def music_jobs():
+    """List all music generation jobs."""
+    from .music_ai import list_music_jobs  # noqa: PLC0415
+    return {"jobs": list_music_jobs()}
+
+
+@app.get("/api/music/providers")
+def music_providers():
+    """Return status of music AI generation providers."""
+    from .music_ai import get_provider_status  # noqa: PLC0415
+    return get_provider_status()
+
+
 # ---------------------------------------------------------------------------
 # Image Generator — AI prompt engineering for image synthesis
 # ---------------------------------------------------------------------------
@@ -466,6 +531,109 @@ def image_generate(payload: ImageGenerateRequest):
         "output": result.content if result.ok else f"LUMI unavailable: {result.error}",
         "model": result.model,
         "ok": result.ok,
+    }
+
+
+class ImageRenderRequest(BaseModel):
+    prompt: str
+    style: str = "photorealistic"
+    width: int = 1024
+    height: int = 576
+    negativePrompt: str = "blurry, low quality, distorted, watermark, text, ugly"
+
+
+@app.post("/api/image/render")
+def image_render(payload: ImageRenderRequest):
+    """
+    Generate a REAL photographic image using AI (HuggingFace FLUX/SDXL, Replicate, or fal.ai).
+    Returns base64-encoded PNG/JPEG and provider info.
+    Set HF_API_KEY, REPLICATE_API_TOKEN, or FAL_KEY in backend/.env for real generation.
+    Without keys, returns provider status and setup instructions.
+    """
+    import base64  # noqa: PLC0415
+    from .image_ai import generate_scene_image, get_provider_status  # noqa: PLC0415
+
+    status = get_provider_status()
+    if not status["anyAvailable"]:
+        return {
+            "ok": False,
+            "provider": "none",
+            "model": "none",
+            "imageBase64": None,
+            "format": None,
+            "providerStatus": status,
+            "message": (
+                "No image AI provider configured. "
+                "Set HF_API_KEY (free at huggingface.co), REPLICATE_API_TOKEN, or FAL_KEY in backend/.env"
+            ),
+        }
+
+    result = generate_scene_image(
+        prompt=payload.prompt,
+        negative_prompt=payload.negativePrompt,
+        width=payload.width,
+        height=payload.height,
+    )
+
+    if result.ok:
+        return {
+            "ok": True,
+            "provider": result.provider,
+            "model": result.model,
+            "imageBase64": base64.b64encode(result.image_bytes).decode(),
+            "format": result.format,
+            "providerStatus": status,
+            "message": f"Image generated via {result.provider} ({result.model})",
+        }
+
+    return {
+        "ok": False,
+        "provider": "none",
+        "model": "none",
+        "imageBase64": None,
+        "format": None,
+        "providerStatus": status,
+        "message": result.error or "Image generation failed.",
+    }
+
+
+@app.get("/api/image/providers")
+def image_providers():
+    """Return status of image AI generation providers."""
+    from .image_ai import get_provider_status  # noqa: PLC0415
+    return get_provider_status()
+
+
+@app.get("/api/video/providers")
+def video_providers():
+    """Return status of video AI generation providers (Replicate, fal.ai, RunwayML)."""
+    from .video_ai import get_provider_status  # noqa: PLC0415
+    return get_provider_status()
+
+
+@app.get("/api/ai/providers")
+def all_providers():
+    """Return combined status of all AI provider integrations (image, video, music, LLM)."""
+    from .image_ai import get_provider_status as img_status  # noqa: PLC0415
+    from .video_ai import get_provider_status as vid_status  # noqa: PLC0415
+    from .music_ai import get_provider_status as mus_status  # noqa: PLC0415
+    from .ollama_provider import get_ollama  # noqa: PLC0415
+    import os  # noqa: PLC0415
+    return {
+        "image": img_status(),
+        "video": vid_status(),
+        "music": mus_status(),
+        "llm": {
+            "openRouter": {"configured": bool(os.getenv("OPENROUTER_API_KEY"))},
+            "ollama": {"available": get_ollama().is_available()},
+        },
+        "setup": {
+            "hfApiKey": "https://huggingface.co/settings/tokens",
+            "replicateToken": "https://replicate.com/account/api-tokens",
+            "falKey": "https://fal.ai/dashboard/keys",
+            "runwayKey": "https://app.runwayml.com/settings",
+            "openRouterKey": "https://openrouter.ai/keys",
+        },
     }
 
 

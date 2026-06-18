@@ -392,15 +392,77 @@ def _run_video_pipeline(job_id: str) -> None:
         total_frames = total_duration * job.fps
         frame_idx = 0
 
+        # Detect if AI image generation is available
+        try:
+            from .image_ai import generate_scene_image, is_image_ai_available  # noqa: PLC0415
+            _ai_images_available = is_image_ai_available()
+        except ImportError:
+            _ai_images_available = False
+
         for scene_i, scene in enumerate(scenes):
             scene_duration = min(int(scene.get("duration_seconds", 5)), total_duration - frame_idx // job.fps)
             scene_frames = scene_duration * job.fps
+
+            # Try to generate a real AI photographic image for this scene
+            scene_img_data: bytes | None = None
+            if _ai_images_available:
+                visual = scene.get("visual_description", job.concept)
+                cam_motion = scene.get("camera_motion", "")
+                color_grade = scene.get("color_grade", "cinematic")
+                ai_prompt = (
+                    f"{visual}. {cam_motion} camera shot. "
+                    f"{color_grade} color grade. "
+                    f"Style: {job.style}."
+                )
+                update(
+                    "rendering",
+                    25 + int(50 * scene_i / max(len(scenes), 1)),
+                    f"Generating AI image for scene {scene_i + 1}/{len(scenes)}…",
+                )
+                try:
+                    ai_result = generate_scene_image(ai_prompt, width=job.resolution[0], height=job.resolution[1])
+                    if ai_result.ok and ai_result.image_bytes:
+                        scene_img_data = ai_result.image_bytes
+                except Exception:
+                    pass
 
             for fi in range(scene_frames):
                 if frame_idx >= total_frames:
                     break
 
-                if _PIL_AVAILABLE:
+                frame_path = frames_dir / f"frame_{frame_idx:06d}.png"
+
+                if scene_img_data and _PIL_AVAILABLE:
+                    # Use AI-generated image as the scene frame
+                    # Add subtle zoom/pan effect to simulate camera motion
+                    try:
+                        from PIL import Image as _PILImage  # noqa: PLC0415
+                        import io  # noqa: PLC0415
+                        ai_img = _PILImage.open(io.BytesIO(scene_img_data)).convert("RGB")
+                        ai_img = ai_img.resize(job.resolution, _PILImage.LANCZOS)
+                        # Apply subtle Ken Burns effect (zoom in 2% over the scene)
+                        zoom_factor = 1.0 + 0.02 * (fi / max(scene_frames - 1, 1))
+                        new_w = int(job.resolution[0] * zoom_factor)
+                        new_h = int(job.resolution[1] * zoom_factor)
+                        zoomed = ai_img.resize((new_w, new_h), _PILImage.LANCZOS)
+                        left = (new_w - job.resolution[0]) // 2
+                        top = (new_h - job.resolution[1]) // 2
+                        cropped = zoomed.crop((left, top, left + job.resolution[0], top + job.resolution[1]))
+                        cropped.save(frame_path, "PNG")
+                    except Exception:
+                        # Fallback to Pillow text frame if image processing fails
+                        if _PIL_AVAILABLE:
+                            img = _render_scene_frame(
+                                scene=scene, frame_index=frame_idx, total_frames=total_frames,
+                                resolution=job.resolution, title=title, color_palette=color_palette,
+                            )
+                            img.save(frame_path)
+                        else:
+                            _write_minimal_png(frame_path, job.resolution)
+                elif scene_img_data and not _PIL_AVAILABLE:
+                    # Write raw AI image bytes directly
+                    frame_path.write_bytes(scene_img_data)
+                elif _PIL_AVAILABLE:
                     img = _render_scene_frame(
                         scene=scene,
                         frame_index=frame_idx,
@@ -409,16 +471,15 @@ def _run_video_pipeline(job_id: str) -> None:
                         title=title,
                         color_palette=color_palette,
                     )
-                    img.save(frames_dir / f"frame_{frame_idx:06d}.png")
+                    img.save(frame_path)
                 else:
-                    # Create a minimal 1-pixel PNG placeholder if Pillow unavailable
-                    # (FFmpeg will still produce a video)
-                    _write_minimal_png(frames_dir / f"frame_{frame_idx:06d}.png", job.resolution)
+                    _write_minimal_png(frame_path, job.resolution)
 
                 frame_idx += 1
 
             scene_pct = 25 + int(55 * (scene_i + 1) / max(len(scenes), 1))
-            update("rendering", scene_pct, f"Rendered scene {scene_i + 1}/{len(scenes)}")
+            ai_label = " (AI photographic)" if scene_img_data else " (text render)"
+            update("rendering", scene_pct, f"Rendered scene {scene_i + 1}/{len(scenes)}{ai_label}")
 
             if frame_idx >= total_frames:
                 break

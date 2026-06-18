@@ -28,6 +28,11 @@ interface VideoStoryboardScene { id: string; title: string; duration_seconds: nu
 interface VideoStoryboard { title?: string; logline?: string; style?: string; total_duration_seconds?: number; color_palette?: string[]; audio?: Record<string, unknown>; scenes?: VideoStoryboardScene[]; }
 interface VideoJob { jobId: string; concept: string; durationSeconds: number; style: string; resolution: string; fps: number; status: string; progress: number; message: string; storyboard: VideoStoryboard; outputPath: string | null; downloadReady: boolean; error: string | null; createdAt: number; }
 
+interface MusicJob { jobId: string; concept: string; genre: string; bpm: number; mood: string; durationSeconds: number; status: string; progress: number; message: string; outputPath: string | null; outputFormat: string | null; compositionBrief: string; provider: string; downloadReady: boolean; error: string | null; createdAt: number; }
+interface ImageRenderResult { ok: boolean; provider: string; model: string; imageBase64: string | null; format: string | null; message: string; }
+interface AiProviderInfo { configured: boolean; note?: string; models?: string[]; activeModel?: string; bestModel?: string; anyAvailable?: boolean; }
+interface AiProvidersStatus { image: AiProviderInfo & { huggingface: AiProviderInfo; replicate: AiProviderInfo; fal: AiProviderInfo; automatic1111: AiProviderInfo; anyAvailable: boolean }; video: AiProviderInfo & { replicate: AiProviderInfo; fal: AiProviderInfo; runway: AiProviderInfo; anyAvailable: boolean }; music: AiProviderInfo & { huggingface: AiProviderInfo; replicate: AiProviderInfo; anyAvailable: boolean }; }
+
 type Tab = 'studio' | 'chat' | 'video' | 'music' | 'image' | 'code' | 'models';
 interface UserKeyEntry { provider: string; name: string; description: string; cost: string; get_key_url: string; recommended: boolean; configured: boolean; key_preview?: string; added_at?: string; }
 interface UserKeysResponse { providers: UserKeyEntry[]; configured_count: number; }
@@ -144,38 +149,35 @@ export default function App() {
   const [videoStyle, setVideoStyle] = useState('cinematic');
   const [videoResolution, setVideoResolution] = useState('1080p');
   const [videoFps, setVideoFps] = useState(24);
-  const [creations, setCreations] = React.useState<any[]>([]);
-  const [creationsLoading, setCreationsLoading] = React.useState(false);
-  const [missionResult, setMissionResult] = React.useState<any>(null);
-  const [missionLoading, setMissionLoading] = React.useState(false);
-  const [missionPrompt, setMissionPrompt] = React.useState('');
-  const [activeCreation, setActiveCreation] = React.useState<any>(null);
-  const [creations, setCreations] = React.useState<any[]>([]);
-  const [creationsLoading, setCreationsLoading] = React.useState(false);
-  const [missionResult, setMissionResult] = React.useState<any>(null);
-  const [missionLoading, setMissionLoading] = React.useState(false);
-  const [missionPrompt, setMissionPrompt] = React.useState('');
-  const [activeCreation, setActiveCreation] = React.useState<any>(null);
   const [videoJobs, setVideoJobs] = useState<VideoJob[]>([]);
   const [creatingVideo, setCreatingVideo] = useState(false);
   const videoPolls = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
-  // Music
+  // Music — brief + real audio
   const [musicConcept, setMusicConcept] = useState('');
   const [musicGenre, setMusicGenre] = useState('cinematic');
   const [musicBpm, setMusicBpm] = useState(120);
   const [musicMood, setMusicMood] = useState('epic');
-  const [musicDuration, setMusicDuration] = useState(60);
+  const [musicDuration, setMusicDuration] = useState(30);
   const [musicResult, setMusicResult] = useState('');
   const [generatingMusic, setGeneratingMusic] = useState(false);
+  const [musicJobs, setMusicJobs] = useState<MusicJob[]>([]);
+  const [creatingMusicJob, setCreatingMusicJob] = useState(false);
+  const musicPolls = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
-  // Image
+  // Image — prompts + real render
   const [imageConcept, setImageConcept] = useState('');
   const [imageStyle, setImageStyle] = useState('photorealistic');
   const [imageAspect, setImageAspect] = useState('16:9');
   const [imageCount, setImageCount] = useState(4);
   const [imageResult, setImageResult] = useState('');
   const [generatingImage, setGeneratingImage] = useState(false);
+  const [imageRenderPrompt, setImageRenderPrompt] = useState('');
+  const [imageRenderResult, setImageRenderResult] = useState<ImageRenderResult | null>(null);
+  const [renderingImage, setRenderingImage] = useState(false);
+
+  // AI Providers status
+  const [aiProviders, setAiProviders] = useState<AiProvidersStatus | null>(null);
 
   // Code
   const [codePrompt, setCodePrompt] = useState('');
@@ -202,7 +204,8 @@ export default function App() {
       fetchJson<{ available: boolean; host: string; localModels: Array<{name:string}>; catalogue: OllamaModel[]; superGemmaReady: boolean; installHint: string }>(`${API}/api/ollama/status`, ctrl.signal),
       fetchJson<{ cascade: ModelCascadeEntry[] }>(`${API}/api/lumi/models`, ctrl.signal),
       fetchJson<UserKeysResponse>(`${API}/api/lumi/user-keys`, ctrl.signal),
-    ]).then(([bk, meta, mb, cp, ol, models, keys]) => {
+      fetchJson<AiProvidersStatus>(`${API}/api/ai/providers`, ctrl.signal),
+    ]).then(([bk, meta, mb, cp, ol, models, keys, providers]) => {
       if (bk.status === 'fulfilled') setBackendStatus(bk.value);
       if (meta.status === 'fulfilled') setMetaStatus(meta.value);
       if (mb.status === 'fulfilled') setMetaBuilderStatus(mb.value);
@@ -210,6 +213,7 @@ export default function App() {
       if (ol.status === 'fulfilled') setOllamaStatus(ol.value);
       if (models.status === 'fulfilled') setOpenRouterCascade(models.value.cascade ?? []);
       if (keys.status === 'fulfilled') setUserKeys(keys.value);
+      if (providers.status === 'fulfilled') setAiProviders(providers.value);
     });
     return () => ctrl.abort();
   }, []);
@@ -243,6 +247,20 @@ export default function App() {
     videoPolls.current.set(jobId, timer);
   }, []);
   useEffect(() => () => { videoPolls.current.forEach(t => clearInterval(t)); }, []);
+
+  // ── Music job polling ──────────────────────────────────────────────────────
+  const pollMusicJob = useCallback((jobId: string) => {
+    if (musicPolls.current.has(jobId)) return;
+    const timer = setInterval(async () => {
+      try {
+        const job = await fetchJson<MusicJob>(`${API}/api/music/${jobId}/status`);
+        setMusicJobs(prev => { const next = [...prev]; const idx = next.findIndex(j => j.jobId === jobId); if (idx >= 0) next[idx] = job; else next.unshift(job); return next; });
+        if (job.status === 'done' || job.status === 'error') { clearInterval(timer); musicPolls.current.delete(jobId); }
+      } catch { clearInterval(timer); musicPolls.current.delete(jobId); }
+    }, 3000);
+    musicPolls.current.set(jobId, timer);
+  }, []);
+  useEffect(() => () => { musicPolls.current.forEach(t => clearInterval(t)); }, []);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
@@ -303,6 +321,42 @@ export default function App() {
     a.download = `trezzworld-video-${jobId.slice(0,8)}.mp4`;
     a.click();
   };
+
+  const startMusicCreation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!musicConcept.trim()) return;
+    setCreatingMusicJob(true);
+    try {
+      const job = await postJson<MusicJob>(`${API}/api/music/create`, {
+        concept: musicConcept, genre: musicGenre, bpm: musicBpm, mood: musicMood, durationSeconds: musicDuration,
+      });
+      setMusicJobs(prev => [job, ...prev]);
+      pollMusicJob(job.jobId);
+    } catch { alert('Failed to start music creation. Is the backend running?'); }
+    finally { setCreatingMusicJob(false); }
+  };
+
+  const downloadMusic = (jobId: string, fmt: string | null) => {
+    const a = document.createElement('a');
+    a.href = `${API}/api/music/${jobId}/download`;
+    a.download = `trezzworld-music-${jobId.slice(0,8)}.${fmt ?? 'wav'}`;
+    a.click();
+  };
+
+  const renderRealImage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!imageRenderPrompt.trim()) return;
+    setRenderingImage(true);
+    setImageRenderResult(null);
+    try {
+      const data = await postJson<ImageRenderResult>(`${API}/api/image/render`, {
+        prompt: imageRenderPrompt, style: imageStyle, width: 1024, height: 576,
+      });
+      setImageRenderResult(data);
+    } catch { setImageRenderResult({ ok: false, provider: 'none', model: 'none', imageBase64: null, format: null, message: '⚠️ Image render failed. Is the backend running?' }); }
+    finally { setRenderingImage(false); }
+  };
+
 
   const generateMusic = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -626,7 +680,11 @@ export default function App() {
 
               <div style={{ ...card, background: 'rgba(56,189,248,0.06)', border: '1px solid rgba(56,189,248,0.15)', padding: '12px 16px' }}>
                 <p style={{ margin: 0, fontSize: '13px', opacity: 0.8 }}>
-                  📋 <strong>Pipeline:</strong> LUMI generates storyboard → Pillow renders frames → FFmpeg encodes MP4.<br/>
+                  📋 <strong>Pipeline:</strong> LUMI generates storyboard → {aiProviders?.image?.anyAvailable ? '🤖 AI photographic images per scene (FLUX/SDXL)' : 'Pillow text renders'} → FFmpeg encodes MP4.<br/>
+                  {aiProviders?.image?.anyAvailable
+                    ? <span>📸 <strong>AI Images:</strong> Real photographic frames via {aiProviders.image.huggingface?.configured ? 'HuggingFace FLUX' : aiProviders.image.replicate?.configured ? 'Replicate' : 'fal.ai'}. Each scene gets a unique AI-generated shot.<br/></span>
+                    : <span>🔑 <strong>Upgrade to AI photographic frames:</strong> Set HF_API_KEY (free), REPLICATE_API_TOKEN, or FAL_KEY in backend/.env<br/></span>
+                  }
                   🖥️ <strong>FFmpeg required</strong> for real MP4: <code>winget install FFmpeg</code> (Win) · <code>brew install ffmpeg</code> (Mac) · <code>apt install ffmpeg</code> (Linux)<br/>
                   🤖 <strong>AI:</strong> SuperGemma 26B (Ollama) if available, otherwise OpenRouter cascade.
                 </p>
@@ -848,15 +906,45 @@ export default function App() {
         <div style={pageWrap}>
           <section style={heroCard}>
             <h1 style={{ margin: '0 0 6px', fontSize: '22px' }}>🎵 Music Generator</h1>
-            <p style={{ margin: 0, opacity: 0.8, fontSize: '14px' }}>LUMI composes detailed production briefs — arrangement, instruments, structure, mixing targets. Export to your DAW (Ableton, FL Studio, Logic).</p>
+            <p style={{ margin: 0, opacity: 0.8, fontSize: '14px' }}>
+              Generate <strong>real audio files</strong> via AI (HuggingFace MusicGen, Replicate) — not synth sounds.
+              Also produces professional production briefs for your DAW (Ableton, FL Studio, Logic Pro).
+            </p>
           </section>
 
+          {/* AI Provider status */}
+          {aiProviders && (
+            <section style={{ ...card, padding: '14px 18px' }}>
+              <h2 style={{ ...h2style, fontSize: '14px', marginBottom: '10px' }}>🎛️ Audio AI Providers</h2>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                {[
+                  { label: 'HuggingFace MusicGen', ok: aiProviders.music?.huggingface?.configured, key: 'HF_API_KEY', url: 'https://huggingface.co/settings/tokens' },
+                  { label: 'Replicate MusicGen', ok: aiProviders.music?.replicate?.configured, key: 'REPLICATE_API_TOKEN', url: 'https://replicate.com/account/api-tokens' },
+                ].map(p => (
+                  <div key={p.label} style={{ ...listItem, minWidth: '200px', flex: 1 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 600 }}>{p.label}</span>
+                      <span style={pill(p.ok ? 'active' : 'planned')}>{p.ok ? '✓ ready' : 'not set'}</span>
+                    </div>
+                    {!p.ok && <p style={{ margin: '4px 0 0', fontSize: '11px', opacity: 0.55 }}>Set <code>{p.key}</code> · <a href={p.url} target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>Get key →</a></p>}
+                  </div>
+                ))}
+              </div>
+              {!aiProviders.music?.anyAvailable && (
+                <p style={{ ...hint, marginTop: '10px', color: '#fde68a' }}>⚠️ No audio AI provider configured — set HF_API_KEY (free) in backend/.env for real music generation.</p>
+              )}
+            </section>
+          )}
+
+          {/* Real Audio Generation */}
           <section style={card}>
-            <h2 style={h2style}>New Music Project</h2>
-            <form onSubmit={generateMusic} style={{ display: 'grid', gap: '16px' }}>
+            <h2 style={h2style}>🎧 Generate Real Audio</h2>
+            <form onSubmit={startMusicCreation} style={{ display: 'grid', gap: '16px' }}>
               <div>
                 <label style={label}>Concept / Brief</label>
-                <textarea value={musicConcept} onChange={e => setMusicConcept(e.target.value)} rows={3} style={textarea} placeholder="e.g. Epic orchestral theme for TrezzWorld Adventures game trailer — builds from quiet strings to full brass, heroic, adventurous, ends with logo sting." />
+                <textarea value={musicConcept} onChange={e => setMusicConcept(e.target.value)} rows={3} style={textarea}
+                  placeholder="e.g. Epic orchestral theme for TrezzWorld Adventures — heroic, full brass, driving percussion, cinematic" />
+                <p style={hint}>LUMI + MusicGen generates a real WAV/MP3 audio file you can download and use directly.</p>
               </div>
               <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                 <div>
@@ -893,20 +981,80 @@ export default function App() {
                 </div>
                 <div style={{ flex: 1, minWidth: '200px' }}>
                   <label style={label}>Duration: {musicDuration}s {musicDuration >= 60 ? `(${(musicDuration/60).toFixed(1)} min)` : ''}</label>
-                  <input type="range" min={15} max={600} step={15} value={musicDuration} onChange={e => setMusicDuration(Number(e.target.value))} style={{ width: '100%', accentColor: '#38bdf8' }} />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', opacity: 0.5 }}><span>15s</span><span>5 min</span><span>10 min</span></div>
+                  <input type="range" min={5} max={60} step={5} value={musicDuration} onChange={e => setMusicDuration(Number(e.target.value))} style={{ width: '100%', accentColor: '#38bdf8' }} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', opacity: 0.5 }}><span>5s</span><span>30s</span><span>60s</span></div>
                 </div>
               </div>
-              <button type="submit" disabled={generatingMusic || !musicConcept.trim()} style={{ ...btn('primary', generatingMusic || !musicConcept.trim()), padding: '12px 28px', fontSize: '15px' }}>
-                {generatingMusic ? '🎵 Composing…' : '🎵 Compose with LUMI'}
-              </button>
+              <div style={{ ...card, background: 'rgba(56,189,248,0.06)', border: '1px solid rgba(56,189,248,0.15)', padding: '12px 16px' }}>
+                <p style={{ margin: 0, fontSize: '13px', opacity: 0.8 }}>
+                  🎵 <strong>Pipeline:</strong> LUMI builds prompt → HuggingFace MusicGen (or Replicate) generates real audio → WAV/MP3 download.<br/>
+                  📝 <strong>Also generates:</strong> Full production brief for Ableton/FL Studio/Logic Pro if no AI provider set.<br/>
+                  🔑 <strong>Free tier:</strong> Set <code>HF_API_KEY</code> at <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>huggingface.co</a>
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                <button type="submit" disabled={creatingMusicJob || !musicConcept.trim()} style={{ ...btn('primary', creatingMusicJob || !musicConcept.trim()), padding: '12px 28px', fontSize: '15px' }}>
+                  {creatingMusicJob ? '⏳ Starting…' : '🎧 Generate Real Audio'}
+                </button>
+                <button type="button" disabled={generatingMusic || !musicConcept.trim()} onClick={generateMusic}
+                  style={{ ...btn('secondary', generatingMusic || !musicConcept.trim()), padding: '12px 22px', fontSize: '15px' }}>
+                  {generatingMusic ? '📝 Writing brief…' : '📝 Brief Only (LUMI)'}
+                </button>
+              </div>
             </form>
           </section>
 
+          {/* Music Jobs */}
+          {musicJobs.length > 0 && (
+            <section style={card}>
+              <h2 style={h2style}>Audio Projects</h2>
+              <div style={{ display: 'grid', gap: '12px' }}>
+                {musicJobs.map(job => (
+                  <div key={job.jobId} style={{ ...listItem, padding: '14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
+                      <div>
+                        <strong style={{ fontSize: '14px' }}>{job.concept.slice(0, 70)}{job.concept.length > 70 ? '…' : ''}</strong>
+                        <p style={{ margin: '2px 0 0', fontSize: '12px', opacity: 0.55 }}>
+                          {job.genre} · {job.bpm}bpm · {job.mood} · {job.durationSeconds}s
+                          {job.provider && ` · ${job.provider}`}
+                          {job.outputFormat && ` · ${job.outputFormat.toUpperCase()}`}
+                        </p>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <span style={pill(job.status)}>{job.status}</span>
+                        {job.downloadReady && (
+                          <button onClick={() => downloadMusic(job.jobId, job.outputFormat)} style={{ ...btn('primary'), padding: '6px 14px', fontSize: '12px' }}>
+                            ⬇ Download {job.outputFormat?.toUpperCase() ?? 'Audio'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <ProgressBar pct={job.progress} status={job.status} />
+                    <p style={{ ...hint, marginTop: '6px' }}>{job.message}</p>
+                    {job.error && <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#fca5a5' }}>⚠️ {job.error}</p>}
+                    {/* Inline audio player for WAV/MP3 */}
+                    {job.downloadReady && job.outputFormat !== 'txt' && (
+                      <audio controls style={{ width: '100%', marginTop: '10px', height: '36px' }} src={`${API}/api/music/${job.jobId}/download`}>
+                        Your browser does not support audio playback.
+                      </audio>
+                    )}
+                    {job.compositionBrief && (
+                      <details style={{ marginTop: '10px' }}>
+                        <summary style={{ fontSize: '12px', opacity: 0.6, cursor: 'pointer' }}>📄 View LUMI Production Brief</summary>
+                        <pre style={{ fontSize: '11px', opacity: 0.75, marginTop: '8px', overflow: 'auto', maxHeight: '200px', background: '#06101e', padding: '10px', borderRadius: '8px', whiteSpace: 'pre-wrap' }}>{job.compositionBrief}</pre>
+                      </details>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* LUMI Brief output (legacy text-only) */}
           {musicResult && (
             <section style={card}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <h2 style={{ ...h2style, margin: 0 }}>🎼 Composition Brief</h2>
+                <h2 style={{ ...h2style, margin: 0 }}>🎼 LUMI Production Brief</h2>
                 <button onClick={() => { const el = document.createElement('a'); el.href = URL.createObjectURL(new Blob([musicResult], {type:'text/plain'})); el.download = 'music-brief.txt'; el.click(); }} style={{ ...btn('secondary'), fontSize: '12px', padding: '6px 12px' }}>⬇ Download</button>
               </div>
               <pre style={{ whiteSpace: 'pre-wrap', fontFamily: '"Inter", system-ui, sans-serif', fontSize: '13px', lineHeight: 1.7, margin: 0, opacity: 0.9 }}>{musicResult}</pre>
@@ -920,11 +1068,75 @@ export default function App() {
         <div style={pageWrap}>
           <section style={heroCard}>
             <h1 style={{ margin: '0 0 6px', fontSize: '22px' }}>🖼 Image Generator</h1>
-            <p style={{ margin: 0, opacity: 0.8, fontSize: '14px' }}>LUMI engineers detailed prompts for Stable Diffusion, Midjourney, DALL-E, or Firefly. Unlimited images. Copy prompts directly into any AI image tool.</p>
+            <p style={{ margin: 0, opacity: 0.8, fontSize: '14px' }}>
+              Generate <strong>real photographic images</strong> via FLUX.1-dev, SDXL, or SD3 (HuggingFace, Replicate, fal.ai, local A1111).
+              Also engineers SD/MJ/DALL-E prompts for any external tool.
+            </p>
           </section>
 
+          {/* Real Image Render */}
           <section style={card}>
-            <h2 style={h2style}>New Image Set</h2>
+            <h2 style={h2style}>📸 Render Real Photographic Image (AI)</h2>
+            {aiProviders && (
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                {[
+                  { label: 'HuggingFace FLUX', ok: aiProviders.image?.huggingface?.configured, key: 'HF_API_KEY', url: 'https://huggingface.co/settings/tokens' },
+                  { label: 'Replicate FLUX', ok: aiProviders.image?.replicate?.configured, key: 'REPLICATE_API_TOKEN', url: 'https://replicate.com/account/api-tokens' },
+                  { label: 'fal.ai FLUX', ok: aiProviders.image?.fal?.configured, key: 'FAL_KEY', url: 'https://fal.ai/dashboard/keys' },
+                  { label: 'Local A1111', ok: false, key: 'STABLE_DIFFUSION_HOST', url: 'https://github.com/AUTOMATIC1111/stable-diffusion-webui' },
+                ].map(p => (
+                  <div key={p.label} style={{ ...listItem, minWidth: '160px', flex: 1 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 600 }}>{p.label}</span>
+                      <span style={pill(p.ok ? 'active' : 'planned')}>{p.ok ? '✓' : 'not set'}</span>
+                    </div>
+                    {!p.ok && <p style={{ margin: '2px 0 0', fontSize: '10px', opacity: 0.5 }}><a href={p.url} target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>{p.key}</a></p>}
+                  </div>
+                ))}
+              </div>
+            )}
+            <form onSubmit={renderRealImage} style={{ display: 'grid', gap: '14px' }}>
+              <div>
+                <label style={label}>Image Prompt</label>
+                <textarea value={imageRenderPrompt} onChange={e => setImageRenderPrompt(e.target.value)} rows={3} style={textarea}
+                  placeholder="e.g. TrezzWorld Adventures hero character standing on a cliff at golden hour, cinematic lighting, 8K detail, photorealistic, dramatic sky" />
+              </div>
+              <button type="submit" disabled={renderingImage || !imageRenderPrompt.trim()} style={{ ...btn('primary', renderingImage || !imageRenderPrompt.trim()), padding: '12px 22px', fontSize: '15px' }}>
+                {renderingImage ? '🖼 Generating image…' : '📸 Render Real Image'}
+              </button>
+            </form>
+            {imageRenderResult && (
+              <div style={{ marginTop: '16px' }}>
+                {imageRenderResult.ok && imageRenderResult.imageBase64 ? (
+                  <div>
+                    <p style={{ ...hint, marginBottom: '8px' }}>✅ {imageRenderResult.message}</p>
+                    <img
+                      src={`data:image/${imageRenderResult.format ?? 'png'};base64,${imageRenderResult.imageBase64}`}
+                      alt="AI generated"
+                      style={{ width: '100%', maxWidth: '800px', borderRadius: '12px', border: '1px solid rgba(56,189,248,0.2)' }}
+                    />
+                    <div style={{ marginTop: '10px', display: 'flex', gap: '8px' }}>
+                      <button
+                        onClick={() => { const a = document.createElement('a'); a.href = `data:image/${imageRenderResult.format};base64,${imageRenderResult.imageBase64}`; a.download = `trezzworld-render.${imageRenderResult.format}`; a.click(); }}
+                        style={{ ...btn('secondary'), fontSize: '12px', padding: '6px 14px' }}>
+                        ⬇ Download {imageRenderResult.format?.toUpperCase()}
+                      </button>
+                      <span style={{ fontSize: '12px', opacity: 0.5, alignSelf: 'center' }}>via {imageRenderResult.provider} ({imageRenderResult.model})</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ ...card, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+                    <p style={{ margin: 0, fontSize: '13px', color: '#fca5a5' }}>{imageRenderResult.message}</p>
+                    <p style={{ margin: '8px 0 0', fontSize: '12px', opacity: 0.7 }}>Use the <strong>Prompt Engineer</strong> section below to generate prompts for external tools like Midjourney, DALL-E 3, or Adobe Firefly.</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          {/* SD Prompt Generator */}
+          <section style={card}>
+            <h2 style={h2style}>🎨 Prompt Engineer (for Midjourney / DALL-E / Firefly)</h2>
             <form onSubmit={generateImage} style={{ display: 'grid', gap: '16px' }}>
               <div>
                 <label style={label}>Concept</label>
@@ -969,7 +1181,7 @@ export default function App() {
                   </select>
                 </div>
               </div>
-              <button type="submit" disabled={generatingImage || !imageConcept.trim()} style={{ ...btn('primary', generatingImage || !imageConcept.trim()), padding: '12px 28px', fontSize: '15px' }}>
+              <button type="submit" disabled={generatingImage || !imageConcept.trim()} style={{ ...btn('secondary', generatingImage || !imageConcept.trim()), padding: '12px 28px', fontSize: '15px' }}>
                 {generatingImage ? '🖼 Engineering prompts…' : '🖼 Generate Image Prompts'}
               </button>
             </form>
@@ -982,7 +1194,7 @@ export default function App() {
                 <button onClick={() => { const el = document.createElement('a'); el.href = URL.createObjectURL(new Blob([imageResult], {type:'text/plain'})); el.download = 'image-prompts.txt'; el.click(); }} style={{ ...btn('secondary'), fontSize: '12px', padding: '6px 12px' }}>⬇ Download</button>
               </div>
               <pre style={{ whiteSpace: 'pre-wrap', fontFamily: '"Inter", system-ui, sans-serif', fontSize: '13px', lineHeight: 1.7, margin: 0, opacity: 0.9, maxHeight: '600px', overflowY: 'auto' }}>{imageResult}</pre>
-              <p style={{ ...hint, marginTop: '12px' }}>Copy each prompt into Stable Diffusion, Midjourney, DALL-E 3, Adobe Firefly, or any AI image tool.</p>
+              <p style={{ ...hint, marginTop: '12px' }}>Copy each prompt into Stable Diffusion, Midjourney, DALL-E 3, Adobe Firefly, or use the Render button above.</p>
             </section>
           )}
         </div>
