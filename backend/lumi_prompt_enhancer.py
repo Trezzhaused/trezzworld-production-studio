@@ -98,7 +98,10 @@ Respond with valid JSON matching this exact schema:
     "music_genre": "string",
     "bpm": number,
     "mood": "string",
-    "sfx_notes": "string"
+    "sfx_notes": "string",
+    "sfx_cues": [
+      {{"time_seconds": number, "description": "string — short sound effect prompt, e.g. 'door creaks open'"}}
+    ]
   }},
   "scenes": [
     {{

@@ -86,8 +86,17 @@ def _find_image_api_credentials() -> tuple[str, str] | None:
 
 
 def _wants_photorealistic_frames(job: "VideoJob") -> bool:
-    """Decide whether this job should try photorealistic image generation."""
-    return any(term in job.style.lower() for term in ["photorealistic", "photo", "realistic"])
+    """
+    Decide whether this job should try AI image generation for frames.
+
+    Every production style (cinematic, 3d, surreal, animated, slideshow,
+    standard, documentary) has a matching model in video_generator_patch's
+    _SD_MODELS, so AI generation is attempted whenever credentials are
+    available — gating used to be a style-keyword match, which meant most
+    styles always fell back to the plain Pillow text-card renderer even with
+    API keys configured.
+    """
+    return True
 
 
 def _api_image_size(resolution: tuple[int, int]) -> str:
@@ -367,7 +376,10 @@ def _placeholder_storyboard(job: VideoJob) -> dict[str, Any]:
         "style": job.style,
         "total_duration_seconds": job.duration_seconds,
         "color_palette": ["#0a1628", "#1a3a5c", "#38bdf8"],
-        "audio": {"music_genre": "cinematic", "bpm": 120, "mood": "epic", "sfx_notes": "ambient"},
+        "audio": {
+            "music_genre": "cinematic", "bpm": 120, "mood": "epic", "sfx_notes": "ambient",
+            "sfx_cues": [{"time_seconds": 0, "description": f"ambient {job.style} atmosphere"}],
+        },
         "scenes": scenes,
     }
 
@@ -556,11 +568,11 @@ def _encode_frames_to_mp4(
     output_path: Path,
     fps: int,
     resolution: tuple[int, int],
-) -> bool:
-    """Use FFmpeg to encode a directory of PNG frames into an MP4."""
+) -> tuple[bool, str]:
+    """Use FFmpeg to encode a directory of PNG frames into an MP4. Returns (success, stderr_tail)."""
     ffmpeg = _find_ffmpeg_executable()
     if ffmpeg is None:
-        return False
+        return False, "ffmpeg executable not found"
 
     w, h = resolution
     cmd = [
@@ -579,6 +591,37 @@ def _encode_frames_to_mp4(
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=MAX_DURATION_SECONDS * 2)
+        stderr_tail = result.stderr.decode("utf-8", errors="replace")[-1000:] if result.stderr else ""
+        return result.returncode == 0, stderr_tail
+    except FileNotFoundError as exc:
+        return False, str(exc)
+    except subprocess.TimeoutExpired:
+        return False, "ffmpeg encode timed out"
+
+
+def _write_fallback_color_video(
+    output_path: Path,
+    fps: int,
+    resolution: tuple[int, int],
+    duration_seconds: int,
+) -> bool:
+    """Encode a real (silent, solid-color) MP4 via ffmpeg's lavfi source — always playable,
+    used when frame-based encoding fails so we never ship a text file disguised as a video."""
+    ffmpeg = _find_ffmpeg_executable()
+    if ffmpeg is None:
+        return False
+    w, h = resolution
+    cmd = [
+        str(ffmpeg), "-y",
+        "-f", "lavfi",
+        "-i", f"color=c=0x0a1628:s={w}x{h}:d={max(1, duration_seconds)}:r={fps}",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        str(output_path),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=120)
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
@@ -607,32 +650,95 @@ def _mux_audio_into_video(video_path: Path, audio_path: Path, output_path: Path)
         return False
 
 
-def _mix_audio_tracks(narration_path: Path | None, music_path: Path | None, output_path: Path) -> Path | None:
-    """Mix narration (full volume) with a music bed (reduced volume) into one file."""
+def _mix_weighted_audio_tracks(tracks: list[tuple[Path, float]], output_path: Path) -> Path | None:
+    """Mix any number of (path, volume) audio tracks into one file via ffmpeg amix."""
+    tracks = [t for t in tracks if t[0] is not None]
+    if not tracks:
+        return None
+    if len(tracks) == 1:
+        return tracks[0][0]
+
     ffmpeg = _find_ffmpeg_executable()
     if ffmpeg is None:
-        return narration_path or music_path
+        return tracks[0][0]
 
-    if narration_path and music_path:
-        cmd = [
-            str(ffmpeg), "-y",
-            "-i", str(narration_path),
-            "-i", str(music_path),
-            "-filter_complex", "[1:a]volume=0.22[bg];[0:a][bg]amix=inputs=2:duration=longest:dropout_transition=2",
-            str(output_path),
-        ]
-    elif narration_path:
-        cmd = [str(ffmpeg), "-y", "-i", str(narration_path), "-c:a", "copy", str(output_path)]
-    elif music_path:
-        cmd = [str(ffmpeg), "-y", "-i", str(music_path), str(output_path)]
-    else:
-        return None
+    cmd = [str(ffmpeg), "-y"]
+    for path, _ in tracks:
+        cmd += ["-i", str(path)]
+
+    labels = []
+    filter_parts = []
+    for i, (_, volume) in enumerate(tracks):
+        filter_parts.append(f"[{i}:a]volume={volume}[a{i}]")
+        labels.append(f"[a{i}]")
+    filter_parts.append(f"{''.join(labels)}amix=inputs={len(tracks)}:duration=longest:dropout_transition=2")
+    cmd += ["-filter_complex", ";".join(filter_parts), str(output_path)]
 
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=180)
-        return output_path if result.returncode == 0 else (narration_path or music_path)
+        return output_path if result.returncode == 0 else tracks[0][0]
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        return narration_path or music_path
+        return tracks[0][0]
+
+
+def _build_sfx_track(sfx_cues: list[dict[str, Any]], work_dir: Path, total_duration: int) -> Path | None:
+    """Generate AudioGen sound effects for each storyboard cue and lay them out by timestamp."""
+    if not sfx_cues:
+        return None
+    try:
+        from .music_creator import _generate_audiogen_sfx, _save_audio_bytes  # noqa: PLC0415
+        from .video_generator_patch import _get_hf_token  # noqa: PLC0415
+    except Exception:
+        return None
+
+    hf_token = _get_hf_token()
+    if not hf_token:
+        return None
+
+    cue_clips: list[tuple[Path, float]] = []  # (path, delay_seconds)
+    for i, cue in enumerate(sfx_cues[:8]):  # cap to avoid excessive API calls
+        description = (cue.get("description") or "").strip()
+        if not description:
+            continue
+        try:
+            time_seconds = max(0.0, float(cue.get("time_seconds", 0)))
+        except (TypeError, ValueError):
+            time_seconds = 0.0
+        if time_seconds >= total_duration:
+            continue
+        audio_bytes = _generate_audiogen_sfx(description, duration_seconds=3, hf_token=hf_token)
+        if not audio_bytes:
+            continue
+        clip_path = work_dir / f"sfx_{i:02d}.wav"
+        if _save_audio_bytes(audio_bytes, clip_path):
+            cue_clips.append((clip_path, time_seconds))
+
+    if not cue_clips:
+        return None
+
+    ffmpeg = _find_ffmpeg_executable()
+    if ffmpeg is None:
+        return cue_clips[0][0]
+
+    cmd = [str(ffmpeg), "-y"]
+    for path, _ in cue_clips:
+        cmd += ["-i", str(path)]
+
+    labels = []
+    filter_parts = []
+    for i, (_, delay_seconds) in enumerate(cue_clips):
+        delay_ms = int(delay_seconds * 1000)
+        filter_parts.append(f"[{i}:a]adelay={delay_ms}|{delay_ms}[s{i}]")
+        labels.append(f"[s{i}]")
+    filter_parts.append(f"{''.join(labels)}amix=inputs={len(cue_clips)}:duration=longest:dropout_transition=2")
+
+    output_path = work_dir / "sfx_mix.wav"
+    cmd += ["-filter_complex", ";".join(filter_parts), str(output_path)]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=180)
+        return output_path if result.returncode == 0 else cue_clips[0][0]
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return cue_clips[0][0]
 
 
 def _build_audio_track(
@@ -645,9 +751,11 @@ def _build_audio_track(
     narrator_voice: str,
     include_music: bool,
 ) -> Path | None:
-    """Generate narration + a music bed and mix them into a single audio file."""
+    """Generate narration, a music bed, and SFX cues, then mix them into a single audio file."""
     narration_path: Path | None = None
     music_path: Path | None = None
+    sfx_path: Path | None = None
+    audio_meta = storyboard.get("audio", {})
 
     if narrate:
         from .narration_engine import synthesize_narration  # noqa: PLC0415
@@ -664,13 +772,12 @@ def _build_audio_track(
     if include_music:
         try:
             from .music_creator import _build_audio_bed_for_video  # noqa: PLC0415
-            audio = storyboard.get("audio", {})
             candidate = work_dir / "music.wav"
             if _build_audio_bed_for_video(
                 concept=job.concept,
-                genre=audio.get("music_genre", "cinematic"),
-                mood=audio.get("mood", "epic"),
-                bpm=int(audio.get("bpm", 120) or 120),
+                genre=audio_meta.get("music_genre", "cinematic"),
+                mood=audio_meta.get("mood", "epic"),
+                bpm=int(audio_meta.get("bpm", 120) or 120),
                 duration_seconds=total_duration,
                 output_path=candidate,
             ):
@@ -678,11 +785,23 @@ def _build_audio_track(
         except Exception:
             music_path = None
 
-    if narration_path is None and music_path is None:
+    try:
+        sfx_path = _build_sfx_track(audio_meta.get("sfx_cues", []), work_dir, total_duration)
+    except Exception:
+        sfx_path = None
+
+    if narration_path is None and music_path is None and sfx_path is None:
         return None
 
     mixed_path = work_dir / "audio_mix.wav"
-    return _mix_audio_tracks(narration_path, music_path, mixed_path)
+    return _mix_weighted_audio_tracks(
+        [
+            (narration_path, 1.0),
+            (music_path, 0.22),
+            (sfx_path, 0.5),
+        ],
+        mixed_path,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -718,12 +837,11 @@ def _run_video_pipeline(job_id: str) -> None:
 
         ffmpeg_ready = _ffmpeg_available()
         if not ffmpeg_ready:
-            update("rendering", 25, "FFmpeg unavailable — skipping frame rendering, creating placeholder MP4…")
-            export_root = _resolve_video_export_dir()
-            output_path = export_root / f"{job_id}.mp4"
-            _write_placeholder_mp4(output_path, title, job.duration_seconds)
-            job.output_path = str(output_path)
-            update("done", 100, "Placeholder MP4 created — FFmpeg is not installed.")
+            job.status = "error"
+            job.error = "FFmpeg is not installed on this host — cannot encode video."
+            job.progress = 0
+            job.message = job.error
+            job.updated_at = time.time()
             return
 
         # Step 2: Render frames
@@ -814,12 +932,12 @@ def _run_video_pipeline(job_id: str) -> None:
 
                 if frame_idx >= total_frames:
                     break
-        except OSError:
-            update("encoding", 82, "Filesystem unavailable, creating placeholder MP4…")
-            output_path = export_root / f"{job_id}.mp4"
-            _write_placeholder_mp4(output_path, title, job.duration_seconds)
-            job.output_path = str(output_path)
-            update("done", 100, "Placeholder MP4 created due export failure.")
+        except OSError as exc:
+            job.status = "error"
+            job.error = f"Filesystem error while rendering frames: {exc}"
+            job.progress = 0
+            job.message = job.error
+            job.updated_at = time.time()
             return
 
         # Step 3: Encode to MP4
@@ -827,14 +945,29 @@ def _run_video_pipeline(job_id: str) -> None:
         silent_path = export_root / f"{job_id}_silent.mp4"
         output_path = export_root / f"{job_id}.mp4"
 
+        encode_stderr = ""
         if _ffmpeg_available():
-            success = _encode_frames_to_mp4(frames_dir, silent_path, job.fps, job.resolution)
+            success, encode_stderr = _encode_frames_to_mp4(frames_dir, silent_path, job.fps, job.resolution)
         else:
             success = False
+            encode_stderr = "ffmpeg not found on this host"
 
         if not success:
-            # Fallback: create a minimal MP4-compatible placeholder
-            _write_placeholder_mp4(output_path, title, job.duration_seconds)
+            # Frame-based encode failed — try a real (silent, solid-color) fallback clip via
+            # ffmpeg's lavfi color source instead of ever shipping a text file disguised as
+            # an .mp4 (that's literally unplayable and was reported as a corrupt-file error).
+            if _ffmpeg_available() and _write_fallback_color_video(output_path, job.fps, job.resolution, total_duration):
+                update("done", 100, f"Frame encoding failed ({encode_stderr[:300]}); shipped a solid-color fallback clip.")
+                shutil.rmtree(frames_dir.parent, ignore_errors=True)
+                job.output_path = str(output_path)
+                return
+            job.status = "error"
+            job.error = f"FFmpeg encoding failed: {encode_stderr[:500]}"
+            job.progress = 0
+            job.message = job.error
+            job.updated_at = time.time()
+            shutil.rmtree(frames_dir.parent, ignore_errors=True)
+            return
         else:
             # Step 4: Build narration + music and mux into the final video
             audio_path = None
@@ -939,18 +1072,6 @@ def _generate_photorealistic_scene_image(
         return True
     except OSError:
         return False
-
-
-def _write_placeholder_mp4(path: Path, title: str, duration: int) -> None:
-    """Write a minimal text file named .mp4 when FFmpeg is unavailable."""
-    path.write_text(
-        f"TrezzWorld Production Studio — Video Export Placeholder\n"
-        f"Title: {title}\nDuration: {duration}s\n"
-        f"Note: Install FFmpeg to generate real MP4 files.\n"
-        f"  Windows:  winget install FFmpeg\n"
-        f"  macOS:    brew install ffmpeg\n"
-        f"  Linux:    sudo apt install ffmpeg\n"
-    )
 
 
 # ---------------------------------------------------------------------------
