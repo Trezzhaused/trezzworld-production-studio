@@ -1234,6 +1234,371 @@ const pillStyle: React.CSSProperties = {
   width: "auto",
 };
 
+// ── Roblox Tab ────────────────────────────────────────────────────────────────
+
+interface RobloxJob {
+  jobId: string;
+  concept: string;
+  genre: string;
+  maxPlayers: number;
+  monetization: string;
+  universeId?: string | null;
+  placeId?: string | null;
+  status: "queued" | "designing" | "scripting" | "packaging" | "done" | "error";
+  progress: number;
+  message: string;
+  designDoc?: any;
+  scriptCount: number;
+  downloadReady: boolean;
+  error?: string;
+}
+
+const ROBLOX_GENRES = ["Adventure", "Obby", "Simulator", "RPG", "Tycoon", "Horror", "Battle Royale", "Roleplay"];
+const ROBLOX_MONETIZATION = ["freemium", "premium", "gamepasses-only", "ad-supported"];
+
+// Steps Lumi/Luau genuinely cannot do via any Roblox API — confirmed via Roblox's
+// own Open Cloud docs (no API exists for these; they require the Roblox website/Studio).
+const ROBLOX_HUMAN_TODO = [
+  { title: "Create the Experience on Roblox", body: "Roblox has no API to create a brand-new experience from scratch. In Roblox Studio or the Creator Dashboard, create one empty experience — that gives you the Universe ID and Place ID to paste into this form. Everything after that is automated." },
+  { title: "Confirm monetization eligibility", body: "Your Roblox account needs to be in good standing and meet Roblox's age/region requirements to sell Game Passes or Developer Products. This is an account-level check only Roblox can do." },
+  { title: "Set up payout / tax info", body: "To cash out Robux earnings (DevEx), add a payout method and tax information in the Creator Dashboard. This is a billing/identity step Roblox requires directly from you." },
+  { title: "Add custom icons for Game Passes / Products", body: "The monetization API call here creates passes/products without a custom image. Upload a unique icon for each one in the Creator Dashboard if you want something other than the default." },
+  { title: "Add store page assets", body: "Screenshots, a trailer video, and the experience's public description/genre tags are set via the Creator Dashboard website — not exposed through any API." },
+  { title: "Playtest in Roblox Studio", body: "Only a human (or real players) can verify the generated Luau scripts actually play well — bugs, balance, and feel need a real playtest before going live." },
+  { title: "Complete the age-rating questionnaire", body: "Roblox requires an Experience Guidelines / age-rating survey for compliance, completed on the website — this can't be automated." },
+  { title: "Enable monetization toggles", body: "If this is the first time monetizing this experience, double-check 'Allow sales' / regional pricing toggles are enabled in the Creator Dashboard." },
+];
+
+function RobloxTodoModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, background: "#000000aa", backdropFilter: "blur(4px)",
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "#0a0f1acc", border: "1px solid #38bdf855", borderRadius: 16,
+          padding: 24, maxWidth: 560, maxHeight: "80vh", overflowY: "auto",
+          boxShadow: "0 0 60px #0ea5e933",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <div style={{ color: "#e2e8f0", fontSize: 16, fontWeight: 700 }}>📋 Finish Launch — Human Steps</div>
+          <button onClick={onClose} style={{ ...btnStyle(true), padding: "4px 10px" }}>✕</button>
+        </div>
+        <div style={{ color: "#64748b", fontSize: 12, marginBottom: 14 }}>
+          Lumi and the generated Luau scripts handle game logic, scripting, publishing, and monetization setup.
+          These steps need a human because no Roblox API exists for them:
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {ROBLOX_HUMAN_TODO.map((item, i) => (
+            <label key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer" }}>
+              <input type="checkbox" style={{ marginTop: 3 }} />
+              <div>
+                <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 600 }}>{item.title}</div>
+                <div style={{ color: "#64748b", fontSize: 12, marginTop: 2 }}>{item.body}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RobloxEditor({ job }: { job: RobloxJob }) {
+  const [showTodo, setShowTodo] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [publishMsg, setPublishMsg] = useState("");
+  const [scripts, setScripts] = useState<any[]>([]);
+  const [passName, setPassName] = useState("");
+  const [passPrice, setPassPrice] = useState(100);
+  const [passDesc, setPassDesc] = useState("");
+  const [monetizationKind, setMonetizationKind] = useState<"game-pass" | "developer-product">("game-pass");
+  const [monetizationBusy, setMonetizationBusy] = useState(false);
+  const [monetizationMsg, setMonetizationMsg] = useState("");
+
+  useEffect(() => {
+    if (job.status === "done") {
+      fetch(`${API}/roblox/game/${job.jobId}/scripts`).then((r) => r.json()).then((d) => setScripts(d.scripts ?? [])).catch(() => {});
+    }
+  }, [job.jobId, job.status]);
+
+  const publish = async () => {
+    setPublishing(true);
+    setPublishMsg("");
+    try {
+      const res = await fetch(`${API}/roblox/game/${job.jobId}/publish`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Publish failed.");
+      setPublishMsg(`✓ Published — version ${data.versionNumber}`);
+      setShowTodo(true);
+    } catch (err: any) {
+      setPublishMsg(`✗ ${err.message}`);
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const addMonetization = async () => {
+    if (!passName.trim()) return;
+    setMonetizationBusy(true);
+    setMonetizationMsg("");
+    try {
+      const res = await fetch(`${API}/roblox/game/${job.jobId}/monetization/${monetizationKind}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: passName, price: passPrice, description: passDesc }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to create.");
+      setMonetizationMsg(`✓ Created "${passName}" at R$${passPrice}`);
+      setPassName(""); setPassDesc("");
+    } catch (err: any) {
+      setMonetizationMsg(`✗ ${err.message}`);
+    } finally {
+      setMonetizationBusy(false);
+    }
+  };
+
+  const downloadUrl = job.downloadReady ? `${API}/roblox/game/${job.jobId}/download` : null;
+
+  return (
+    <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 8, padding: 16 }}>
+      <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 8, fontWeight: 600, letterSpacing: 1 }}>
+        GAME EDITOR
+      </div>
+
+      {job.designDoc?.title && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ color: "#e2e8f0", fontSize: 15, fontWeight: 700 }}>{job.designDoc.title}</div>
+          <div style={{ color: "#64748b", fontSize: 12 }}>{job.designDoc.tagline}</div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+        {downloadUrl && (
+          <a href={downloadUrl} download style={{ ...btnStyle(true), textDecoration: "none" }}>⬇ Download ZIP (Rojo)</a>
+        )}
+        {job.status === "done" && (
+          <button onClick={publish} disabled={publishing} style={btnStyle(!publishing)}>
+            {publishing ? "⏳ Publishing..." : "🚀 Publish to Roblox"}
+          </button>
+        )}
+        <button onClick={() => setShowTodo(true)} style={{ ...btnStyle(true), color: "#a855f7" }}>
+          📋 Finish Launch Checklist
+        </button>
+      </div>
+      {publishMsg && <div style={{ color: publishMsg.startsWith("✓") ? "#86efac" : "#fca5a5", fontSize: 12, marginBottom: 12 }}>{publishMsg}</div>}
+
+      {scripts.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ color: "#64748b", fontSize: 11, marginBottom: 6 }}>GENERATED SCRIPTS ({scripts.length})</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 140, overflowY: "auto" }}>
+            {scripts.map((s, i) => (
+              <div key={i} style={{ background: "#0f172a", borderRadius: 4, padding: "6px 10px", display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: "#94a3b8", fontSize: 11, fontFamily: "monospace" }}>{s.path}</span>
+                <span style={{ color: "#475569", fontSize: 10 }}>{s.type}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {job.status === "done" && (
+        <div style={{ borderTop: "1px solid #1e3a5f", paddingTop: 12 }}>
+          <div style={{ color: "#a855f7", fontSize: 11, marginBottom: 8, fontWeight: 700, letterSpacing: 1 }}>
+            💰 MONETIZATION
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+            <select value={monetizationKind} onChange={(e) => setMonetizationKind(e.target.value as any)} style={pillStyle}>
+              <option value="game-pass">Game Pass</option>
+              <option value="developer-product">Developer Product</option>
+            </select>
+            <input type="text" placeholder="Name" value={passName} onChange={(e) => setPassName(e.target.value)} style={{ ...inputStyle, width: 140 }} />
+            <input type="number" placeholder="Price (R$)" value={passPrice} min={0} onChange={(e) => setPassPrice(parseInt(e.target.value) || 0)} style={{ ...inputStyle, width: 90 }} />
+            <input type="text" placeholder="Description" value={passDesc} onChange={(e) => setPassDesc(e.target.value)} style={{ ...inputStyle, width: 160 }} />
+            <button onClick={addMonetization} disabled={monetizationBusy || !passName.trim()} style={btnStyle(!monetizationBusy && !!passName.trim())}>
+              {monetizationBusy ? "⏳" : "+ Create"}
+            </button>
+          </div>
+          {monetizationMsg && <div style={{ color: monetizationMsg.startsWith("✓") ? "#86efac" : "#fca5a5", fontSize: 12 }}>{monetizationMsg}</div>}
+        </div>
+      )}
+
+      {showTodo && <RobloxTodoModal onClose={() => setShowTodo(false)} />}
+    </div>
+  );
+}
+
+function RobloxTab() {
+  const [concept, setConcept] = useState("");
+  const [genre, setGenre] = useState("Adventure");
+  const [maxPlayers, setMaxPlayers] = useState(20);
+  const [monetization, setMonetization] = useState("freemium");
+  const [universeId, setUniverseId] = useState("");
+  const [placeId, setPlaceId] = useState("");
+  const [jobs, setJobs] = useState<RobloxJob[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [selectedJob, setSelectedJob] = useState<RobloxJob | null>(null);
+  const [oauthStatus, setOauthStatus] = useState<{ connected: boolean; user?: any }>({ connected: false });
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const loadOauthStatus = () => {
+    fetch(`${API}/roblox/oauth/status`).then((r) => r.json()).then(setOauthStatus).catch(() => {});
+  };
+
+  useEffect(() => {
+    loadOauthStatus();
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("robloxAuth")) {
+      loadOauthStatus();
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
+
+  const signOut = async () => {
+    await fetch(`${API}/roblox/oauth/logout`, { method: "POST" });
+    loadOauthStatus();
+  };
+
+  const createJob = async () => {
+    if (!concept.trim() || !universeId.trim() || !placeId.trim()) return;
+    setCreating(true);
+    try {
+      const res = await fetch(`${API}/roblox/game/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ concept, genre, maxPlayers, monetization, universeId, placeId }),
+      });
+      const job: RobloxJob = await res.json();
+      setJobs((prev) => [job, ...prev]);
+      setSelectedJob(job);
+      setConcept("");
+    } catch (err) {
+      console.error("Failed to create Roblox job:", err);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  useEffect(() => {
+    pollRef.current = setInterval(async () => {
+      const active = jobs.filter((j) => !["done", "error"].includes(j.status));
+      if (!active.length) return;
+      const updated = await Promise.all(
+        active.map(async (j) => {
+          try {
+            const res = await fetch(`${API}/roblox/game/${j.jobId}/status`);
+            return (await res.json()) as RobloxJob;
+          } catch {
+            return j;
+          }
+        })
+      );
+      setJobs((prev) => prev.map((j) => updated.find((u) => u.jobId === j.jobId) ?? j));
+      setSelectedJob((sel) => (sel ? (updated.find((u) => u.jobId === sel.jobId) ?? sel) : sel));
+    }, 3000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [jobs]);
+
+  const canCreate = concept.trim() && universeId.trim() && placeId.trim() && !creating;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Roblox sign-in bar */}
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 8, padding: "10px 14px",
+      }}>
+        <div style={{ color: "#94a3b8", fontSize: 12 }}>
+          {oauthStatus.connected
+            ? `🎮 Signed in as ${oauthStatus.user?.name || oauthStatus.user?.preferred_username || "Roblox user"}`
+            : "🎮 Not signed in — publish/monetization will use a static admin API key if configured"}
+        </div>
+        {oauthStatus.connected ? (
+          <button onClick={signOut} style={btnStyle(true)}>Sign out</button>
+        ) : (
+          <a href={`${API}/roblox/oauth/login`} style={{ ...btnStyle(true), textDecoration: "none" }}>Sign in with Roblox</a>
+        )}
+      </div>
+
+      {/* Creation form */}
+      <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 14 }}>
+        <textarea
+          value={concept}
+          onChange={(e) => setConcept(e.target.value)}
+          placeholder='Describe your game... (e.g., "A tycoon where players build and manage a pizza shop")'
+          rows={3}
+          style={{ ...inputStyle, resize: "vertical", border: "none", background: "transparent", padding: "4px 2px", marginBottom: 10 }}
+        />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+          <select value={genre} onChange={(e) => setGenre(e.target.value)} style={pillStyle}>
+            {ROBLOX_GENRES.map((g) => <option key={g} value={g}>{g}</option>)}
+          </select>
+          <input type="number" value={maxPlayers} min={2} max={100} onChange={(e) => setMaxPlayers(parseInt(e.target.value) || 20)} title="Max players" style={{ ...pillStyle, width: 70 }} />
+          <select value={monetization} onChange={(e) => setMonetization(e.target.value)} style={pillStyle}>
+            {ROBLOX_MONETIZATION.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input type="text" placeholder="Universe ID (from your created Experience)" value={universeId} onChange={(e) => setUniverseId(e.target.value)} style={{ ...inputStyle, width: 220 }} />
+          <input type="text" placeholder="Place ID" value={placeId} onChange={(e) => setPlaceId(e.target.value)} style={{ ...inputStyle, width: 140 }} />
+          <div style={{ flex: 1 }} />
+          <button onClick={createJob} disabled={!canCreate} style={{ ...btnStyle(!!canCreate), padding: "10px 20px", fontSize: 13, fontWeight: 700 }}>
+            {creating ? "⏳ Creating..." : "🎮 Generate Game"}
+          </button>
+        </div>
+        {(!universeId.trim() || !placeId.trim()) && (
+          <div style={{ color: "#64748b", fontSize: 11, marginTop: 8 }}>
+            Don't have these yet? Create an empty Experience at{" "}
+            <a href="https://create.roblox.com/dashboard/creations" target="_blank" rel="noreferrer" style={{ color: "#38bdf8" }}>
+              create.roblox.com
+            </a>{" "}— Roblox doesn't offer an API to create one from scratch.
+          </div>
+        )}
+      </div>
+
+      {/* Jobs list */}
+      {jobs.length > 0 && (
+        <div>
+          <div style={{ color: "#64748b", fontSize: 11, marginBottom: 8, fontWeight: 600, letterSpacing: 1 }}>JOBS</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {jobs.map((job) => (
+              <div
+                key={job.jobId}
+                onClick={() => setSelectedJob(job)}
+                style={{
+                  background: selectedJob?.jobId === job.jobId ? "#0f2438" : "#0a0f1a",
+                  border: `1px solid ${selectedJob?.jobId === job.jobId ? "#38bdf8" : "#1e3a5f"}`,
+                  borderRadius: 6, padding: "10px 14px", cursor: "pointer",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <div style={{ color: "#94a3b8", fontSize: 12, fontWeight: 600 }}>
+                    {job.concept.slice(0, 50)}{job.concept.length > 50 ? "..." : ""}
+                  </div>
+                  <StatusBadge status={job.status} />
+                </div>
+                <ProgressBar value={job.progress} color="#a855f7" />
+                <div style={{ color: "#475569", fontSize: 11, marginTop: 4 }}>{job.message}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {selectedJob && <RobloxEditor key={selectedJob.jobId} job={selectedJob} />}
+    </div>
+  );
+}
+
 // ── LUMI Chat Tab ─────────────────────────────────────────────────────────────
 
 interface ChatMessage {
@@ -1409,8 +1774,14 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "settings", label: "Settings", icon: "⚙" },
 ];
 
+function getInitialTab(): Tab {
+  const params = new URLSearchParams(window.location.search);
+  const t = params.get("tab");
+  return (t === "video" || t === "music" || t === "lumi" || t === "roblox" || t === "settings") ? t : "video";
+}
+
 export default function App() {
-  const [tab, setTab] = useState<Tab>("video");
+  const [tab, setTab] = useState<Tab>(getInitialTab());
 
   return (
     <div style={{
@@ -1464,11 +1835,7 @@ export default function App() {
         {tab === "video" && <VideoTab />}
         {tab === "music" && <MusicTab />}
         {tab === "lumi" && <LumiTab />}
-        {tab === "roblox" && (
-          <div style={{ color: "#64748b", textAlign: "center", paddingTop: 80 }}>
-            Roblox Game Creator — coming in next build
-          </div>
-        )}
+        {tab === "roblox" && <RobloxTab />}
         {tab === "settings" && <SettingsTab />}
       </div>
     </div>
