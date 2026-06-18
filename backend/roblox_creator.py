@@ -83,6 +83,48 @@ class RobloxJob:
             "updatedAt": self.updated_at,
         }
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "RobloxJob":
+        # Note: `scripts` content isn't in to_dict()'s payload (only scriptCount is),
+        # so a rehydrated job loses script content after a restart — the ZIP at
+        # output_path still has them; only the live /scripts endpoint would be empty.
+        return cls(
+            job_id=d["jobId"],
+            concept=d.get("concept", ""),
+            genre=d.get("genre", "Adventure"),
+            max_players=d.get("maxPlayers", 20),
+            monetization=d.get("monetization", "freemium"),
+            status=d.get("status", "done"),
+            progress=d.get("progress", 0),
+            message=d.get("message", ""),
+            design_doc=d.get("designDoc") or {},
+            output_path=d.get("outputPath"),
+            error=d.get("error"),
+            created_at=d.get("createdAt", time.time()),
+            updated_at=d.get("updatedAt", time.time()),
+        )
+
+
+def _persist_roblox_job(job: "RobloxJob") -> None:
+    from .job_store import save_job  # noqa: PLC0415
+    save_job("roblox", job.job_id, job.to_dict())
+
+
+def _load_persisted_roblox_jobs() -> None:
+    try:
+        from .job_store import load_jobs  # noqa: PLC0415
+        for data in load_jobs("roblox"):
+            try:
+                job = RobloxJob.from_dict(data)
+                _JOBS[job.job_id] = job
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
+_load_persisted_roblox_jobs()
+
 
 # ---------------------------------------------------------------------------
 # LUMI prompts
@@ -563,6 +605,7 @@ def _run_roblox_pipeline(job_id: str) -> None:
         job.progress = progress
         job.message = message
         job.updated_at = time.time()
+        _persist_roblox_job(job)
 
     try:
         # Step 1: Generate design document
@@ -623,8 +666,8 @@ def _run_roblox_pipeline(job_id: str) -> None:
         update("packaging", 80, "Packaging game project…")
         zip_path = _build_zip(job, design)
 
-        update("done", 100, f"Game ready: {zip_path.name}")
         job.output_path = str(zip_path)
+        update("done", 100, f"Game ready: {zip_path.name}")
 
     except Exception as exc:  # noqa: BLE001
         job.status = "error"
@@ -632,6 +675,8 @@ def _run_roblox_pipeline(job_id: str) -> None:
         job.progress = 0
         job.message = f"Pipeline error: {exc}"
         job.updated_at = time.time()
+    finally:
+        _persist_roblox_job(job)
 
 
 # ---------------------------------------------------------------------------
@@ -645,6 +690,9 @@ def create_roblox_job(
     monetization: str = "freemium",
 ) -> RobloxJob:
     """Create and queue a new Roblox game creation job."""
+    from .export_cleanup import sweep_old_exports  # noqa: PLC0415
+    sweep_old_exports(_resolve_roblox_export_dir())
+
     job_id = str(uuid.uuid4())
     job = RobloxJob(
         job_id=job_id,
@@ -655,6 +703,7 @@ def create_roblox_job(
     )
     with _LOCK:
         _JOBS[job_id] = job
+    _persist_roblox_job(job)
 
     thread = threading.Thread(target=_run_roblox_pipeline, args=(job_id,), daemon=True)
     thread.start()

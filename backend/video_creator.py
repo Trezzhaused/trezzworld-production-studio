@@ -293,6 +293,48 @@ class VideoJob:
             "updatedAt": self.updated_at,
         }
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "VideoJob":
+        w, h = (d.get("resolution") or "1920x1080").split("x")
+        return cls(
+            job_id=d["jobId"],
+            concept=d.get("concept", ""),
+            duration_seconds=d.get("durationSeconds", 60),
+            style=d.get("style", "cinematic"),
+            resolution=(int(w), int(h)),
+            fps=d.get("fps", DEFAULT_FPS),
+            narrate=d.get("narrate", True),
+            narrator_voice=d.get("narratorVoice", "en-US-female"),
+            include_music=d.get("includeMusic", True),
+            status=d.get("status", "done"),
+            progress=d.get("progress", 0),
+            message=d.get("message", ""),
+            storyboard=d.get("storyboard") or {},
+            output_path=d.get("outputPath"),
+            error=d.get("error"),
+            warnings=d.get("warnings") or [],
+            used_photorealistic=d.get("usedPhotorealistic", False),
+            created_at=d.get("createdAt", time.time()),
+            updated_at=d.get("updatedAt", time.time()),
+        )
+
+
+def _load_persisted_jobs() -> None:
+    """Rehydrate job history from SQLite on process startup (survives redeploys)."""
+    try:
+        from .job_store import load_jobs  # noqa: PLC0415
+        for data in load_jobs("video"):
+            try:
+                job = VideoJob.from_dict(data)
+                _JOBS[job.job_id] = job
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
+_load_persisted_jobs()
+
 
 # ---------------------------------------------------------------------------
 # Storyboard generation
@@ -611,18 +653,17 @@ def _encode_frames_to_mp4(
     """
     Use FFmpeg to encode a directory of PNG frames into an MP4. Returns (success, stderr_tail).
 
-    Railway's container has limited RAM/CPU; x264's lookahead/thread buffers scale with
-    preset and thread count, and got the process OOM-killed (SIGKILL, exit code -9) at
-    1080p even on "medium". Try a moderately lean encode first, and if it's killed for
-    a memory-related reason (-9, or any negative/signal exit code), retry once with the
-    leanest possible settings (ultrafast, single thread) before giving up — this never
-    sacrifices correctness, only speed/compression efficiency on retry.
+    Railway's container was previously much smaller and got OOM-killed (SIGKILL, exit
+    code -9) even on "medium" preset at 1080p. The container is now provisioned with
+    8 vCPU / 8GB RAM, comfortably enough for a quality-focused preset — but keep a
+    leaner automatic retry as a safety net for any future resource-constrained deploy
+    rather than assuming this headroom is permanent.
     """
     ffmpeg = _find_ffmpeg_executable()
     if ffmpeg is None:
         return False, "ffmpeg executable not found"
 
-    success, info = _run_x264_encode(ffmpeg, frames_dir, output_path, fps, resolution, preset="fast", crf=20, threads=2)
+    success, info = _run_x264_encode(ffmpeg, frames_dir, output_path, fps, resolution, preset="medium", crf=18, threads=4)
     if success:
         return True, info
 
@@ -844,6 +885,11 @@ def _build_audio_track(
 # Pipeline executor (runs in background thread)
 # ---------------------------------------------------------------------------
 
+def _persist_job(job: "VideoJob") -> None:
+    from .job_store import save_job  # noqa: PLC0415
+    save_job("video", job.job_id, job.to_dict())
+
+
 def _run_video_pipeline(job_id: str) -> None:
     with _LOCK:
         job = _JOBS.get(job_id)
@@ -855,6 +901,7 @@ def _run_video_pipeline(job_id: str) -> None:
         job.progress = progress
         job.message = message
         job.updated_at = time.time()
+        _persist_job(job)
 
     try:
         # Step 1: Generate storyboard (skipped if a REWORK-iT re-render supplied one already)
@@ -1052,8 +1099,8 @@ def _run_video_pipeline(job_id: str) -> None:
             done_message = f"MP4 ready: {output_path.name} (photorealistic AI frames)"
         else:
             done_message = f"MP4 ready: {output_path.name} (no image API key configured — used built-in renderer)"
-        update("done", 100, done_message)
         job.output_path = str(output_path)
+        update("done", 100, done_message)
 
     except Exception as exc:  # noqa: BLE001
         job.status = "error"
@@ -1061,6 +1108,8 @@ def _run_video_pipeline(job_id: str) -> None:
         job.progress = 0
         job.message = f"Pipeline error: {exc}"
         job.updated_at = time.time()
+    finally:
+        _persist_job(job)
 
 
 def _write_minimal_png(path: Path, resolution: tuple[int, int]) -> None:
@@ -1153,6 +1202,9 @@ def create_video_job(
     (reordered/edited scenes, regenerated images) without paying for a fresh
     AI storyboard call.
     """
+    from .export_cleanup import sweep_old_exports  # noqa: PLC0415
+    sweep_old_exports(_resolve_video_export_dir())
+
     # Clamp duration
     duration_seconds = max(5, min(duration_seconds, MAX_DURATION_SECONDS))
 
@@ -1183,6 +1235,7 @@ def create_video_job(
 
     with _LOCK:
         _JOBS[job_id] = job
+    _persist_job(job)
 
     # Run in background thread
     thread = threading.Thread(target=_run_video_pipeline, args=(job_id,), daemon=True)
@@ -1316,6 +1369,7 @@ def create_trim_job(source_job_id: str, start_seconds: float, end_seconds: float
     )
     with _LOCK:
         _JOBS[job_id] = job
+    _persist_job(job)
     return job
 
 
@@ -1345,7 +1399,7 @@ def create_export_job(source_job_id: str, resolution_label: str) -> VideoJob | N
         str(ffmpeg), "-y",
         "-i", str(source.output_path),
         "-vf", f"scale={w}:{h}:flags=lanczos",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-threads", "2",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-threads", "4",
         "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart",
         str(output_path),
@@ -1371,6 +1425,7 @@ def create_export_job(source_job_id: str, resolution_label: str) -> VideoJob | N
     )
     with _LOCK:
         _JOBS[job_id] = job
+    _persist_job(job)
     return job
 
 

@@ -740,6 +740,50 @@ class MusicJob:
             "hoursUntilArchive": max(0.0, (self.expires_at - time.time()) / 3600),
         }
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "MusicJob":
+        return cls(
+            job_id=d["jobId"],
+            concept=d.get("concept", ""),
+            genre=d.get("genre", "cinematic"),
+            bpm=d.get("bpm", 120),
+            mood=d.get("mood", "epic"),
+            duration_seconds=d.get("durationSeconds", 60),
+            engine=d.get("engine", "musicgen-small"),
+            status=d.get("status", "done"),
+            progress=d.get("progress", 0),
+            message=d.get("message", ""),
+            composition=d.get("composition", ""),
+            output_path=d.get("outputPath"),
+            archive_path=d.get("archivePath"),
+            archived=d.get("archived", False),
+            error=d.get("error"),
+            created_at=d.get("createdAt", time.time()),
+            updated_at=d.get("updatedAt", time.time()),
+            expires_at=d.get("expiresAt", time.time() + 12 * 3600),
+        )
+
+
+def _persist_music_job(job: "MusicJob") -> None:
+    from .job_store import save_job  # noqa: PLC0415
+    save_job("music", job.job_id, job.to_dict())
+
+
+def _load_persisted_music_jobs() -> None:
+    try:
+        from .job_store import load_jobs  # noqa: PLC0415
+        for data in load_jobs("music"):
+            try:
+                job = MusicJob.from_dict(data)
+                _JOBS[job.job_id] = job
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
+_load_persisted_music_jobs()
+
 
 # ── Composition brief generation ──────────────────────────────────────────────
 
@@ -807,6 +851,7 @@ def _run_music_pipeline(job_id: str) -> None:
         job.progress = progress
         job.message = message
         job.updated_at = time.time()
+        _persist_music_job(job)
 
     try:
         # Step 1: Generate composition brief
@@ -925,6 +970,8 @@ def _run_music_pipeline(job_id: str) -> None:
         job.message = f"Pipeline error: {exc}"
         job.progress = 0
         job.updated_at = time.time()
+    finally:
+        _persist_music_job(job)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -938,6 +985,9 @@ def create_music_job(
     engine: str = "musicgen-small",
 ) -> MusicJob:
     """Create and queue a new music generation job."""
+    from .export_cleanup import sweep_old_exports  # noqa: PLC0415
+    sweep_old_exports(_resolve_music_export_dir())
+
     duration_seconds = max(15, min(duration_seconds, 600))
     bpm = max(60, min(bpm, 200))
 
@@ -958,6 +1008,7 @@ def create_music_job(
 
     with _LOCK:
         _JOBS[job_id] = job
+    _persist_music_job(job)
 
     thread = threading.Thread(target=_run_music_pipeline, args=(job_id,), daemon=True)
     thread.start()
