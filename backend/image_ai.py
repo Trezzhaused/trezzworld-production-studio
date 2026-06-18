@@ -4,7 +4,7 @@ Image AI — Real photographic image generation for TrezzWorld Production Studio
 Provider cascade (tried in order):
   1. AUTOMATIC1111 (local Stable Diffusion WebUI) — http://localhost:7860
   2. HuggingFace Inference API — FLUX.1-dev / SDXL / SD3 (free tier, HF_API_KEY)
-  3. Replicate API — FLUX.1-dev / SDXL (REPLICATE_API_TOKEN)
+  3. Replicate API — Ideogram v3 Turbo / FLUX.1-dev / SDXL (REPLICATE_API_TOKEN)
   4. fal.ai API — FLUX / SDXL (FAL_KEY)
 
 Returns raw image bytes (PNG/JPEG) so the video pipeline can save frames directly.
@@ -40,8 +40,16 @@ _SD_HOST             = os.getenv("STABLE_DIFFUSION_HOST", "http://localhost:7860
 _HF_IMAGE_MODEL      = os.getenv("HF_IMAGE_MODEL", "black-forest-labs/FLUX.1-dev")
 _HF_FALLBACK_MODEL   = "stabilityai/stable-diffusion-xl-base-1.0"
 
-# Replicate model IDs
-_REPLICATE_IMAGE_MODEL = "black-forest-labs/flux-dev"
+# Replicate model IDs  (primary → fallback order)
+_REPLICATE_IMAGE_MODEL         = "ideogram-ai/ideogram-v3-turbo"
+_REPLICATE_FLUX_FALLBACK       = "black-forest-labs/flux-dev"
+_REPLICATE_SDXL_FALLBACK       = "stability-ai/sdxl"
+
+# Ideogram v3 Turbo supported aspect ratios
+_IDEOGRAM_ASPECT_RATIOS = (
+    "1:1", "3:2", "2:3", "4:3", "3:4",
+    "16:9", "9:16", "1:3", "3:1",
+)
 
 HF_API_BASE = "https://api-inference.huggingface.co/models"
 REPLICATE_API = "https://api.replicate.com/v1/predictions"
@@ -157,38 +165,82 @@ def _try_huggingface(prompt: str, width: int, height: int) -> ImageResult | None
 # Provider 3: Replicate
 # ---------------------------------------------------------------------------
 
+def _width_height_to_aspect_ratio(width: int, height: int) -> str:
+    """Map pixel dimensions to the closest Ideogram v3 Turbo aspect ratio string."""
+    ratio = width / max(height, 1)
+    # Map common ratios to supported strings
+    candidates: dict[str, float] = {
+        "1:1":  1.0,
+        "3:2":  1.5,
+        "2:3":  2 / 3,
+        "4:3":  4 / 3,
+        "3:4":  3 / 4,
+        "16:9": 16 / 9,
+        "9:16": 9 / 16,
+        "1:3":  1 / 3,
+        "3:1":  3.0,
+    }
+    return min(candidates, key=lambda k: abs(candidates[k] - ratio))
+
+
 def _try_replicate(prompt: str, width: int, height: int) -> ImageResult | None:
-    """Try Replicate API (FLUX.1-dev or SDXL)."""
+    """Try Replicate API — Ideogram v3 Turbo primary, FLUX.1-dev / SDXL fallback."""
     if not _REPLICATE_TOKEN:
         return None
 
+    # Replicate REST API uses ****** (RFC 6750)
     headers = {
-        "Authorization": f"Token {_REPLICATE_TOKEN}",
+        "Authorization": "Bearer " + _REPLICATE_TOKEN,
         "Content-Type": "application/json",
         "Prefer": "wait",
     }
-    # Try FLUX.1-dev first, fall back to SDXL
-    for model in (_REPLICATE_IMAGE_MODEL, "stability-ai/sdxl"):
-        body: dict[str, Any] = {
-            "version": "latest",
-            "input": {
+
+    aspect_ratio = _width_height_to_aspect_ratio(width, height)
+
+    # --- Model cascade ---------------------------------------------------------
+    # Each entry: (model_slug, input_body)
+    # For the models/{owner}/{name}/predictions endpoint the "version" field
+    # must NOT be included — it always runs the latest published version.
+    model_inputs: list[tuple[str, dict[str, Any]]] = [
+        (
+            _REPLICATE_IMAGE_MODEL,  # ideogram-ai/ideogram-v3-turbo
+            {"prompt": prompt, "aspect_ratio": aspect_ratio},
+        ),
+        (
+            _REPLICATE_FLUX_FALLBACK,  # black-forest-labs/flux-dev
+            {
+                "prompt": prompt,
+                "width": min(width, 1440),
+                "height": min(height, 1440),
+                "num_outputs": 1,
+                "num_inference_steps": 28,
+            },
+        ),
+        (
+            _REPLICATE_SDXL_FALLBACK,  # stability-ai/sdxl
+            {
                 "prompt": prompt,
                 "width": min(width, 1024),
                 "height": min(height, 1024),
                 "num_outputs": 1,
                 "num_inference_steps": 20,
             },
-        }
+        ),
+    ]
+
+    for model, input_body in model_inputs:
+        body: dict[str, Any] = {"input": input_body}
         try:
             raw = _http_post(
                 f"https://api.replicate.com/v1/models/{model}/predictions",
                 body, headers, timeout=120,
             )
             data = json.loads(raw)
-            # Poll if not done
             prediction_id = data.get("id")
             output = data.get("output")
             status = data.get("status", "")
+
+            # Poll if not yet complete (Prefer: wait may still return 'processing')
             poll_count = 0
             while status in ("starting", "processing") and poll_count < 30:
                 time.sleep(3)
@@ -206,7 +258,10 @@ def _try_replicate(prompt: str, width: int, height: int) -> ImageResult | None:
                 img_raw = _http_get(url_to_fetch, {}, timeout=30)
                 if img_raw and len(img_raw) > 500:
                     fmt = "png" if img_raw[:4] == b"\x89PNG" else "jpeg"
-                    return ImageResult(ok=True, image_bytes=img_raw, format=fmt, provider="replicate", model=model)
+                    return ImageResult(
+                        ok=True, image_bytes=img_raw, format=fmt,
+                        provider="replicate", model=model,
+                    )
         except Exception:
             continue
     return None
@@ -319,7 +374,8 @@ def get_provider_status() -> dict[str, Any]:
         "replicate": {
             "configured": bool(_REPLICATE_TOKEN),
             "model": _REPLICATE_IMAGE_MODEL,
-            "note": "Set REPLICATE_API_TOKEN env var. Get key at replicate.com/account/api-tokens",
+            "fallbackModels": [_REPLICATE_FLUX_FALLBACK, _REPLICATE_SDXL_FALLBACK],
+            "note": "Set REPLICATE_API_TOKEN env var. Primary model: Ideogram v3 Turbo. Get key at replicate.com/account/api-tokens",
         },
         "fal": {
             "configured": bool(_FAL_KEY),
