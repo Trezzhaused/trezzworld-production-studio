@@ -9,6 +9,7 @@ venv/
 *.egg-info/
 .DS_Store
 exports/video/*.mp4
+runs/missions.sqlite
 runs/missions.sqlite-shm
 runs/missions.sqlite-wal
 

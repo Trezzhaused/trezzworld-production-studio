@@ -7,11 +7,17 @@ Stores missions, pipeline jobs, chat history, and winning output fragments.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
 
-STORE_PATH = Path(__file__).resolve().parents[1] / "runs" / "missions.sqlite"
+# Set DATA_DIR to a mounted Railway Volume path (e.g. "/data") so missions and
+# saved API keys (user_key_store.py shares this same file) survive redeploys —
+# without a Volume, Railway's container filesystem is wiped on every deploy
+# regardless of this path.
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).resolve().parents[1] / "runs")))
+STORE_PATH = DATA_DIR / "missions.sqlite"
 
 _SCHEMA = """
 PRAGMA journal_mode=WAL;

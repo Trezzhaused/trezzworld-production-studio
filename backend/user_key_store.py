@@ -10,7 +10,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-_DB_PATH = Path(__file__).resolve().parents[1] / "runs" / "missions.sqlite"
+from .mission_store import STORE_PATH as _DB_PATH  # shared DB file; see DATA_DIR there
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS user_api_keys (
