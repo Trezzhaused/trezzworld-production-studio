@@ -17,14 +17,19 @@ Requires:
 """
 from __future__ import annotations
 
+import base64
+import io
 import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,6 +46,176 @@ EXPORTS_DIR = Path("exports/video")
 MAX_DURATION_SECONDS = 600  # 10 minutes hard cap
 DEFAULT_FPS = 24
 DEFAULT_RESOLUTION = (1920, 1080)
+
+
+def _resolve_video_export_dir() -> Path:
+    """Return a writable export directory, falling back to a temp dir when needed."""
+    try:
+        EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        test_file = EXPORTS_DIR / ".write_test"
+        test_file.write_text("ok")
+        test_file.unlink(missing_ok=True)
+        return EXPORTS_DIR
+    except OSError:
+        fallback = Path(tempfile.gettempdir()) / "trezzworld" / "exports" / "video"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
+def _find_image_api_credentials() -> tuple[str, str] | None:
+    """Return the best available image API provider and key for photorealistic frames."""
+    from .user_key_store import get_user_key_store  # noqa: PLC0415
+
+    openai_key = os.environ.get("OPENAI_API_KEY") or get_user_key_store().get_key("openai")
+    if openai_key:
+        return "openai", openai_key
+
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY") or get_user_key_store().get_key("openrouter")
+    if openrouter_key:
+        return "openrouter", openrouter_key
+
+    return None
+
+
+def _wants_photorealistic_frames(job: "VideoJob") -> bool:
+    """Decide whether this job should try photorealistic image generation."""
+    return any(term in job.style.lower() for term in ["photorealistic", "photo", "realistic"])
+
+
+def _api_image_size(resolution: tuple[int, int]) -> str:
+    """Choose an image generation size compatible with common image APIs."""
+    max_dim = max(resolution)
+    if max_dim <= 512:
+        return "512x512"
+    return "1024x1024"
+
+
+def _download_image_from_url(url: str) -> bytes | None:
+    try:
+        with urllib.request.urlopen(url, timeout=120) as resp:
+            return resp.read()
+    except Exception:
+        return None
+
+
+def _call_image_generation_api(
+    prompt: str,
+    provider: str,
+    api_key: str,
+    size: str,
+) -> bytes | None:
+    """Call an OpenAI-compatible or OpenRouter image generation endpoint."""
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + api_key,
+        "User-Agent": "TrezzWorldVideoGenerator/1.0",
+    }
+    payload = json.dumps({"model": "gpt-image-1", "prompt": prompt, "size": size, "n": 1}).encode("utf-8")
+
+    endpoints = []
+    if provider == "openai":
+        endpoints = ["https://api.openai.com/v1/images/generations"]
+    elif provider == "openrouter":
+        endpoints = [
+            "https://api.openrouter.ai/v1/images/generate",
+            "https://api.openrouter.ai/v1/images/generations",
+        ]
+
+    for url in endpoints:
+        try:
+            req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                if isinstance(data, dict):
+                    images = data.get("data") or data.get("output")
+                    if isinstance(images, list) and images:
+                        item = images[0]
+                        b64_json = item.get("b64_json")
+                        if b64_json:
+                            return base64.b64decode(b64_json)
+                        image_url = item.get("url")
+                        if image_url:
+                            downloaded = _download_image_from_url(image_url)
+                            if downloaded:
+                                return downloaded
+        except urllib.error.HTTPError:
+            continue
+        except Exception:
+            continue
+
+    return None
+
+
+def _build_scene_image_prompt(
+    scene: dict[str, Any],
+    title: str,
+    style: str,
+    resolution: tuple[int, int],
+) -> str:
+    """Build a photorealistic image prompt from the storyboard scene data."""
+    size = f"{resolution[0]}x{resolution[1]}"
+    visual = scene.get("visual_description", "").strip()
+    overlay = scene.get("text_overlay") or ""
+    camera_motion = scene.get("camera_motion", "static")
+    color_grade = scene.get("color_grade", "cinematic teal-orange")
+
+    prompt = (
+        f"Photorealistic cinematic frame for a video titled '{title}'. "
+        f"Scene: {scene.get('title', 'Untitled Scene')}. "
+        f"Description: {visual}. "
+        f"Lighting: cinematic {color_grade}. "
+        f"Camera motion: {camera_motion}. "
+        f"Style: {style or 'photorealistic'}, ultra-detailed, dramatic lighting, realistic texture, "
+        "high resolution, film-quality, atmospheric depth, polished cinematography. "
+        f"Aspect ratio: {size}."
+    )
+    if overlay:
+        prompt += f" Add subtle overlay text: '{overlay}'."
+    prompt += " Use natural human skin tones where appropriate and realistic environmental detail."
+    return prompt
+
+
+def _crop_and_resize_image(img: "Image.Image", resolution: tuple[int, int]) -> "Image.Image":
+    """Resize and crop an image to the target video resolution while preserving composition."""
+    w, h = resolution
+    src_w, src_h = img.size
+    target_ratio = w / h
+    src_ratio = src_w / src_h
+
+    if abs(src_ratio - target_ratio) > 0.01:
+        if src_ratio > target_ratio:
+            new_w = int(src_h * target_ratio)
+            left = max(0, (src_w - new_w) // 2)
+            img = img.crop((left, 0, left + new_w, src_h))
+        else:
+            new_h = int(src_w / target_ratio)
+            top = max(0, (src_h - new_h) // 2)
+            img = img.crop((0, top, src_w, top + new_h))
+
+    return img.resize((w, h), Image.LANCZOS)
+
+
+def _render_photorealistic_motion_frame(
+    base_img: "Image.Image",
+    frame_index: int,
+    scene_frames: int,
+    resolution: tuple[int, int],
+) -> "Image.Image":
+    """Create a subtle Ken Burns motion frame from a static photorealistic image."""
+    w, h = resolution
+    progress = frame_index / max(scene_frames - 1, 1)
+    zoom = 1.0 + 0.04 * math.sin(progress * math.pi * 2)
+    pan_x = int((base_img.width - w / zoom) * 0.5 * (1 + math.sin(progress * math.pi * 2)))
+    pan_y = int((base_img.height - h / zoom) * 0.5 * (1 + math.cos(progress * math.pi * 2)))
+
+    crop_w = int(min(base_img.width, round(w / zoom)))
+    crop_h = int(min(base_img.height, round(h / zoom)))
+    left = max(0, min(base_img.width - crop_w, pan_x))
+    top = max(0, min(base_img.height - crop_h, pan_y))
+
+    frame = base_img.crop((left, top, left + crop_w, top + crop_h)).resize((w, h), Image.LANCZOS)
+    return frame
+
 
 # Status store: {job_id: VideoJob}
 _JOBS: dict[str, "VideoJob"] = {}
@@ -312,10 +487,43 @@ def _truncate(text: str, max_len: int) -> str:
 # FFmpeg encoder
 # ---------------------------------------------------------------------------
 
+def _find_ffmpeg_executable() -> Path | None:
+    """Return a usable ffmpeg executable path if available."""
+    env_path = os.environ.get("FFMPEG_PATH")
+    if env_path:
+        ffmpeg = Path(env_path)
+        if ffmpeg.is_file():
+            return ffmpeg
+
+    ffmpeg_path = shutil.which("ffmpeg")
+    if ffmpeg_path:
+        return Path(ffmpeg_path)
+
+    # Common Windows locations for Winget / manual FFmpeg installs.
+    candidates = [
+        Path.home() / "AppData" / "Local" / "Microsoft" / "WinGet" / "Packages",
+        Path.home() / "AppData" / "Local" / "CapCut" / "Apps",
+        Path.home() / "AppData" / "Local" / "Programs" / "FFmpeg",
+        Path("C:/Program Files/FFmpeg/bin"),
+        Path("C:/Program Files (x86)/FFmpeg/bin"),
+    ]
+    for root in candidates:
+        if not root.exists():
+            continue
+        for exe in root.rglob("ffmpeg.exe"):
+            if exe.is_file():
+                return exe
+
+    return None
+
+
 def _ffmpeg_available() -> bool:
+    ffmpeg = _find_ffmpeg_executable()
+    if ffmpeg is None:
+        return False
     try:
         result = subprocess.run(
-            ["ffmpeg", "-version"], capture_output=True, timeout=5
+            [str(ffmpeg), "-version"], capture_output=True, timeout=5
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -329,9 +537,13 @@ def _encode_frames_to_mp4(
     resolution: tuple[int, int],
 ) -> bool:
     """Use FFmpeg to encode a directory of PNG frames into an MP4."""
+    ffmpeg = _find_ffmpeg_executable()
+    if ffmpeg is None:
+        return False
+
     w, h = resolution
     cmd = [
-        "ffmpeg",
+        str(ffmpeg),
         "-y",
         "-framerate", str(fps),
         "-i", str(frames_dir / "frame_%06d.png"),
@@ -384,109 +596,99 @@ def _run_video_pipeline(job_id: str) -> None:
         # Step 2: Render frames
         update("rendering", 25, "Rendering frames…")
 
-        EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
-        frames_dir = EXPORTS_DIR / job_id / "frames"
-        frames_dir.mkdir(parents=True, exist_ok=True)
+        use_photorealistic = _wants_photorealistic_frames(job)
+        image_api_info = _find_image_api_credentials() if use_photorealistic else None
+        if image_api_info is not None:
+            update("rendering", 25, f"Generating photorealistic frames via {image_api_info[0]}…")
+        elif use_photorealistic:
+            update("rendering", 25, "Photorealistic style requested, but no image API key found. Falling back to built-in renderer.")
+            use_photorealistic = False
+
+        export_root = _resolve_video_export_dir()
+        frames_dir = export_root / job_id / "frames"
+        try:
+            frames_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            frames_dir = Path(tempfile.mkdtemp(prefix=f"trezzworld_video_{job_id}_"))
 
         # Count total frames
         total_frames = total_duration * job.fps
         frame_idx = 0
 
-        # Detect if AI image generation is available
         try:
-            from .image_ai import generate_scene_image, is_image_ai_available  # noqa: PLC0415
-            _ai_images_available = is_image_ai_available()
-        except ImportError:
-            _ai_images_available = False
+            for scene_i, scene in enumerate(scenes):
+                scene_duration = min(int(scene.get("duration_seconds", 5)), total_duration - frame_idx // job.fps)
+                scene_frames = scene_duration * job.fps
 
-        for scene_i, scene in enumerate(scenes):
-            scene_duration = min(int(scene.get("duration_seconds", 5)), total_duration - frame_idx // job.fps)
-            scene_frames = scene_duration * job.fps
+                scene_image_path: Path | None = None
+                scene_base_image = None
+                if use_photorealistic and scene_frames > 0:
+                    scene_image_path = frames_dir / f"scene_{scene_i+1:03d}.png"
+                    if _generate_photorealistic_scene_image(
+                        scene=scene,
+                        title=title,
+                        style=job.style,
+                        resolution=job.resolution,
+                        target_path=scene_image_path,
+                        image_provider=image_api_info[0],
+                        api_key=image_api_info[1],
+                    ):
+                        if _PIL_AVAILABLE:
+                            try:
+                                from PIL import Image  # noqa: PLC0415
+                                scene_base_image = Image.open(scene_image_path).convert("RGB")
+                            except Exception:
+                                scene_base_image = None
+                    else:
+                        scene_image_path = None
+                        update("rendering", 25 + int(10 * (scene_i + 1) / max(len(scenes), 1)), f"Photorealistic generation failed for scene {scene_i + 1}, using fallback renderer.")
 
-            # Try to generate a real AI photographic image for this scene
-            scene_img_data: bytes | None = None
-            if _ai_images_available:
-                visual = scene.get("visual_description", job.concept)
-                cam_motion = scene.get("camera_motion", "")
-                color_grade = scene.get("color_grade", "cinematic")
-                ai_prompt = (
-                    f"{visual}. {cam_motion} camera shot. "
-                    f"{color_grade} color grade. "
-                    f"Style: {job.style}."
-                )
-                update(
-                    "rendering",
-                    25 + int(50 * scene_i / max(len(scenes), 1)),
-                    f"Generating AI image for scene {scene_i + 1}/{len(scenes)}…",
-                )
-                try:
-                    ai_result = generate_scene_image(ai_prompt, width=job.resolution[0], height=job.resolution[1])
-                    if ai_result.ok and ai_result.image_bytes:
-                        scene_img_data = ai_result.image_bytes
-                except Exception:
-                    pass
+                for fi in range(scene_frames):
+                    if frame_idx >= total_frames:
+                        break
 
-            for fi in range(scene_frames):
+                    frame_path = frames_dir / f"frame_{frame_idx:06d}.png"
+                    if scene_base_image is not None:
+                        frame_image = _render_photorealistic_motion_frame(
+                            scene_base_image,
+                            fi,
+                            scene_frames,
+                            job.resolution,
+                        )
+                        frame_image.save(frame_path)
+                    elif scene_image_path is not None and scene_base_image is None:
+                        shutil.copy(scene_image_path, frame_path)
+                    elif _PIL_AVAILABLE:
+                        img = _render_scene_frame(
+                            scene=scene,
+                            frame_index=frame_idx,
+                            total_frames=total_frames,
+                            resolution=job.resolution,
+                            title=title,
+                            color_palette=color_palette,
+                        )
+                        img.save(frame_path)
+                    else:
+                        _write_minimal_png(frame_path, job.resolution)
+
+                    frame_idx += 1
+
+                scene_pct = 25 + int(55 * (scene_i + 1) / max(len(scenes), 1))
+                update("rendering", scene_pct, f"Rendered scene {scene_i + 1}/{len(scenes)}")
+
                 if frame_idx >= total_frames:
                     break
-
-                frame_path = frames_dir / f"frame_{frame_idx:06d}.png"
-
-                if scene_img_data and _PIL_AVAILABLE:
-                    # Use AI-generated image as the scene frame
-                    # Add subtle zoom/pan effect to simulate camera motion
-                    try:
-                        from PIL import Image as _PILImage  # noqa: PLC0415
-                        import io  # noqa: PLC0415
-                        ai_img = _PILImage.open(io.BytesIO(scene_img_data)).convert("RGB")
-                        ai_img = ai_img.resize(job.resolution, _PILImage.LANCZOS)
-                        # Apply subtle Ken Burns effect (zoom in 2% over the scene)
-                        zoom_factor = 1.0 + 0.02 * (fi / max(scene_frames - 1, 1))
-                        new_w = int(job.resolution[0] * zoom_factor)
-                        new_h = int(job.resolution[1] * zoom_factor)
-                        zoomed = ai_img.resize((new_w, new_h), _PILImage.LANCZOS)
-                        left = (new_w - job.resolution[0]) // 2
-                        top = (new_h - job.resolution[1]) // 2
-                        cropped = zoomed.crop((left, top, left + job.resolution[0], top + job.resolution[1]))
-                        cropped.save(frame_path, "PNG")
-                    except Exception:
-                        # Fallback to Pillow text frame if image processing fails
-                        if _PIL_AVAILABLE:
-                            img = _render_scene_frame(
-                                scene=scene, frame_index=frame_idx, total_frames=total_frames,
-                                resolution=job.resolution, title=title, color_palette=color_palette,
-                            )
-                            img.save(frame_path)
-                        else:
-                            _write_minimal_png(frame_path, job.resolution)
-                elif scene_img_data and not _PIL_AVAILABLE:
-                    # Write raw AI image bytes directly
-                    frame_path.write_bytes(scene_img_data)
-                elif _PIL_AVAILABLE:
-                    img = _render_scene_frame(
-                        scene=scene,
-                        frame_index=frame_idx,
-                        total_frames=total_frames,
-                        resolution=job.resolution,
-                        title=title,
-                        color_palette=color_palette,
-                    )
-                    img.save(frame_path)
-                else:
-                    _write_minimal_png(frame_path, job.resolution)
-
-                frame_idx += 1
-
-            scene_pct = 25 + int(55 * (scene_i + 1) / max(len(scenes), 1))
-            ai_label = " (AI photographic)" if scene_img_data else " (text render)"
-            update("rendering", scene_pct, f"Rendered scene {scene_i + 1}/{len(scenes)}{ai_label}")
-
-            if frame_idx >= total_frames:
-                break
+        except OSError:
+            update("encoding", 82, "Filesystem unavailable, creating placeholder MP4…")
+            output_path = export_root / f"{job_id}.mp4"
+            _write_placeholder_mp4(output_path, title, job.duration_seconds)
+            job.output_path = str(output_path)
+            update("done", 100, "Placeholder MP4 created due export failure.")
+            return
 
         # Step 3: Encode to MP4
         update("encoding", 82, "Encoding MP4…")
-        output_path = EXPORTS_DIR / f"{job_id}.mp4"
+        output_path = export_root / f"{job_id}.mp4"
 
         if _ffmpeg_available():
             success = _encode_frames_to_mp4(frames_dir, output_path, job.fps, job.resolution)
@@ -530,6 +732,40 @@ def _write_minimal_png(path: Path, resolution: tuple[int, int]) -> None:
     png += chunk(b"IDAT", compressed)
     png += chunk(b"IEND", b"")
     path.write_bytes(png)
+
+
+def _generate_photorealistic_scene_image(
+    scene: dict[str, Any],
+    title: str,
+    style: str,
+    resolution: tuple[int, int],
+    target_path: Path,
+    image_provider: str,
+    api_key: str,
+) -> bool:
+    """Generate a single photorealistic scene image using an image API."""
+    prompt = _build_scene_image_prompt(scene, title, style, resolution)
+    size = _api_image_size(resolution)
+    image_bytes = _call_image_generation_api(prompt, image_provider, api_key, size)
+    if image_bytes is None:
+        return False
+
+    if _PIL_AVAILABLE:
+        try:
+            from PIL import Image  # noqa: PLC0415
+            img = Image.open(io.BytesIO(image_bytes))
+            img = img.convert("RGB")
+            img = _crop_and_resize_image(img, resolution)
+            img.save(target_path)
+            return True
+        except Exception:
+            pass
+
+    try:
+        target_path.write_bytes(image_bytes)
+        return True
+    except OSError:
+        return False
 
 
 def _write_placeholder_mp4(path: Path, title: str, duration: int) -> None:
