@@ -136,8 +136,22 @@ def lumi_chat(payload: LumiChatRequest):
         db_history = store.get_chat_history(payload.missionId, limit=20)
         history = [{"role": h["role"], "content": h["content"]} for h in db_history[:-1]]
 
+    # If the user is asking for visual output, actually generate a real image
+    # instead of letting the chat model hallucinate having "attached" one —
+    # plain chat completions have no file I/O of their own.
+    image_id: str | None = None
+    image_note = ""
+    from .lumi_image_export import wants_visual_output, has_image_credentials, generate_lumi_image  # noqa: PLC0415
+    if wants_visual_output(payload.message):
+        if has_image_credentials():
+            image_id, image_fail_reason = generate_lumi_image(payload.message)
+            if image_id is None:
+                image_note = f"\n\n[Image generation attempted but failed: {image_fail_reason[:200]}]"
+        else:
+            image_note = "\n\n[No image-generation API key configured — add one in Settings to enable real image output.]"
+
     result = router.lumi_chat(
-        payload.message,
+        payload.message + image_note,
         history=history,
         use_ollama=payload.useOllama,
         ollama_model=payload.ollamaModel,
@@ -161,7 +175,18 @@ def lumi_chat(payload: LumiChatRequest):
         "content": content,
         "model": model_used,
         "ok": result.ok,
+        "imageUrl": f"/api/lumi/export/{image_id}" if image_id else None,
     }
+
+
+@app.get("/api/lumi/export/{image_id}")
+def lumi_export_image(image_id: str):
+    """Download an image LUMI generated during a chat conversation."""
+    from .lumi_image_export import get_image_path  # noqa: PLC0415
+    path = get_image_path(image_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Image not found or expired.")
+    return FileResponse(path=str(path), media_type="image/png", filename=f"lumi-{image_id}.png")
 
 
 @app.get("/api/lumi/chat/history")

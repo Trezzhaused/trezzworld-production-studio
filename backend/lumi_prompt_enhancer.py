@@ -76,6 +76,19 @@ _DOMAIN_SYSTEMS: dict[str, str] = {
     ),
 }
 
+# Appended to every system prompt — a plain chat-completion turn cannot attach,
+# upload, or generate a file by itself. Claiming otherwise is the single most
+# damaging failure mode for a tool-using assistant: it erodes trust completely.
+_NO_FALSE_ATTACHMENTS_RULE = (
+    "\n\nIMPORTANT: You cannot attach, upload, or generate files directly in your text "
+    "response — you are a text-completion model with no file I/O of your own. If the "
+    "system generates a real image for this request, it will appear separately, above "
+    "your reply; describe it in present tense as already visible, but NEVER claim you "
+    "personally attached, uploaded, or created a file. If no image was generated, say so "
+    "plainly and suggest what's needed (e.g. an image-generation API key in Settings) "
+    "instead of pretending to produce one."
+)
+
 # ---------------------------------------------------------------------------
 # Enhancement templates
 # ---------------------------------------------------------------------------
@@ -151,7 +164,7 @@ def enhance_prompt(
     Returns a messages list: [{"role": "system", ...}, {"role": "user", ...}]
     """
     resolved_domain = domain or detect_domain(user_prompt)
-    system_content = _DOMAIN_SYSTEMS.get(resolved_domain, _DOMAIN_SYSTEMS["default"])
+    system_content = _DOMAIN_SYSTEMS.get(resolved_domain, _DOMAIN_SYSTEMS["default"]) + _NO_FALSE_ATTACHMENTS_RULE
 
     user_content = user_prompt
     if extra_context:

@@ -1636,6 +1636,7 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   model?: string;
+  imageUrl?: string | null;
 }
 
 const DOMAINS = [
@@ -1707,7 +1708,7 @@ function LumiTab() {
         }),
       });
       const data = await res.json();
-      setMessages((prev) => [...prev, { role: "assistant", content: data.content, model: data.model }]);
+      setMessages((prev) => [...prev, { role: "assistant", content: data.content, model: data.model, imageUrl: data.imageUrl }]);
     } catch (err) {
       setMessages((prev) => [...prev, { role: "assistant", content: "LUMI is unreachable — check your connection." }]);
     } finally {
@@ -1763,6 +1764,12 @@ function LumiTab() {
               background: m.role === "user" ? "#0ea5e9" : "#0f172a",
               color: m.role === "user" ? "#fff" : "#e2e8f0",
             }}>
+              {m.imageUrl && (
+                <div style={{ marginBottom: 8 }}>
+                  <img src={m.imageUrl} alt="LUMI generated" style={{ maxWidth: "100%", borderRadius: 6, display: "block", marginBottom: 6 }} />
+                  <a href={m.imageUrl} download style={{ color: "#38bdf8", fontSize: 11, textDecoration: "none" }}>⬇ Download image</a>
+                </div>
+              )}
               {m.content}
               {m.role === "assistant" && m.model && m.model !== "none" && (
                 <div style={{ color: "#475569", fontSize: 10, marginTop: 6 }}>— {m.model}</div>
