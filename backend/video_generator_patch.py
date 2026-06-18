@@ -115,10 +115,10 @@ def _call_sd_hf(
     width: int = 1024,
     height: int = 576,
     hf_token: str | None = None,
-) -> bytes | None:
+) -> tuple[bytes | None, str]:
     """
     Call HuggingFace Inference API for Stable Diffusion image generation.
-    Returns raw PNG bytes or None.
+    Returns (raw PNG bytes or None, diagnostic reason on failure).
     """
     api_url = f"{_HF_BASE}/{model_id}"
     payload = json.dumps({
@@ -139,13 +139,12 @@ def _call_sd_hf(
     req = urllib.request.Request(api_url, data=payload, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
-            content_type = resp.headers.get("Content-Type", "")
             raw = resp.read()
             # HF returns image bytes directly for image models
             if raw and len(raw) > 1000 and (
                 raw[:4] == b"\x89PNG" or raw[:3] == b"\xff\xd8\xff"
             ):
-                return raw
+                return raw, ""
             # Some models return JSON with base64
             if b"image" in raw[:500].lower():
                 try:
@@ -153,23 +152,32 @@ def _call_sd_hf(
                     if isinstance(data, list) and data:
                         b64 = data[0].get("generated_image") or data[0].get("image")
                         if b64:
-                            return base64.b64decode(b64)
+                            return base64.b64decode(b64), ""
                 except Exception:
                     pass
-            return raw if raw and len(raw) > 1000 else None
+            if raw and len(raw) > 1000:
+                return raw, ""
+            return None, f"HF {model_id}: response too small/unrecognized ({len(raw)} bytes): {raw[:200]!r}"
     except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")[:300]
         if exc.code == 503:
             # Model loading — wait and retry once
             time.sleep(25)
             try:
                 with urllib.request.urlopen(req, timeout=120) as resp:
                     raw = resp.read()
-                    return raw if raw and len(raw) > 1000 else None
-            except Exception:
-                return None
-        return None
-    except Exception:
-        return None
+                    if raw and len(raw) > 1000:
+                        return raw, ""
+                    return None, f"HF {model_id}: still loading after retry ({body})"
+            except urllib.error.HTTPError as exc2:
+                return None, f"HF {model_id}: HTTP {exc2.code} on retry: {exc2.read().decode('utf-8', errors='replace')[:300]}"
+            except Exception as exc2:
+                return None, f"HF {model_id}: retry failed: {exc2}"
+        return None, f"HF {model_id}: HTTP {exc.code}: {body}"
+    except urllib.error.URLError as exc:
+        return None, f"HF {model_id}: network error: {exc}"
+    except Exception as exc:
+        return None, f"HF {model_id}: {exc}"
 
 
 # ── Wan 2.2 via fal.ai ───────────────────────────────────────────────────────
@@ -315,7 +323,7 @@ def generate_scene_image_ai(
     style: str,
     resolution: tuple[int, int],
     target_path: Path,
-) -> bool:
+) -> tuple[bool, str]:
     """
     Generate a photorealistic scene image using the best available AI generator.
 
@@ -323,7 +331,7 @@ def generate_scene_image_ai(
       1. Stable Diffusion (HuggingFace) — primary for stills
       2. Wan 2.2 (fal.ai) — if fal key available and SD fails
       3. Kling 2.1 (fal.ai) — if Wan fails
-      4. Returns False (caller falls back to Pillow renderer)
+      4. Returns (False, diagnostic) — caller falls back to Pillow renderer
 
     Args:
         scene: Scene dict with visual_description, title, camera_motion, color_grade
@@ -333,10 +341,13 @@ def generate_scene_image_ai(
         target_path: Where to save the PNG
 
     Returns:
-        True if image was saved successfully, False otherwise.
+        (True, "") if image was saved successfully, (False, reason) otherwise.
     """
     hf_token = _get_hf_token()
     fal_key = _get_fal_key()
+
+    if not hf_token and not fal_key:
+        return False, "No image generation API key configured — add a Hugging Face or fal.ai key in Settings."
 
     style_lower = style.lower()
     model_config = _SD_MODELS.get(style_lower, _SD_MODELS["standard"])
@@ -363,45 +374,39 @@ def generate_scene_image_ai(
     else:
         sd_w, sd_h = 1024, 1024
 
+    errors: list[str] = []
+
     # ── Attempt 1: Stable Diffusion primary model ──────────────────────────
     if hf_token:
-        image_bytes = _call_sd_hf(
-            model_config["primary"],
-            base_prompt,
-            negative,
-            sd_w,
-            sd_h,
-            hf_token,
-        )
+        image_bytes, err = _call_sd_hf(model_config["primary"], base_prompt, negative, sd_w, sd_h, hf_token)
         if image_bytes and _save_image_to_path(image_bytes, target_path, resolution):
-            return True
+            return True, ""
+        if err:
+            errors.append(err)
 
         # ── Attempt 2: SD fallback model ──────────────────────────────────
-        image_bytes = _call_sd_hf(
-            model_config["fallback"],
-            base_prompt,
-            negative,
-            sd_w,
-            sd_h,
-            hf_token,
-        )
+        image_bytes, err = _call_sd_hf(model_config["fallback"], base_prompt, negative, sd_w, sd_h, hf_token)
         if image_bytes and _save_image_to_path(image_bytes, target_path, resolution):
-            return True
+            return True, ""
+        if err:
+            errors.append(err)
 
     # ── Attempt 3: Wan 2.2 via fal.ai ─────────────────────────────────────
     if fal_key:
         aspect = "landscape_16_9" if w >= h else "portrait_16_9"
         wan_bytes = _call_wan_fal(base_prompt, image_size=aspect, fal_key=fal_key)
         if wan_bytes and _save_image_to_path(wan_bytes, target_path, resolution):
-            return True
+            return True, ""
+        errors.append("fal.ai Wan 2.2: no result (see server logs)")
 
         # ── Attempt 4: Kling 2.1 via fal.ai ──────────────────────────────
         kling_ratio = "16:9" if w >= h else "9:16"
         kling_bytes = _call_kling_fal(base_prompt, aspect_ratio=kling_ratio, fal_key=fal_key)
         if kling_bytes and _save_image_to_path(kling_bytes, target_path, resolution):
-            return True
+            return True, ""
+        errors.append("fal.ai Kling 2.1: no result (see server logs)")
 
-    return False
+    return False, " | ".join(errors) if errors else "No image generator produced a usable result."
 
 
 def _save_image_to_path(

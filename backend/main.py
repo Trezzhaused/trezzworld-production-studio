@@ -446,6 +446,36 @@ def video_rerender(job_id: str, payload: VideoRerenderRequest):
     return job.to_dict()
 
 
+class VideoLumiEditRequest(BaseModel):
+    instruction: str
+
+
+@app.post("/api/video/{job_id}/lumi-edit")
+def video_lumi_edit(job_id: str, payload: VideoLumiEditRequest):
+    """
+    Apply a natural-language edit instruction to a video's storyboard via LUMI (e.g.
+    "make scene 3 happen at night" or "swap the order of the first two scenes"), then
+    re-render. This is REWORK-iT's AI-assisted edit mode, as opposed to manually
+    reordering/editing scenes and calling /rerender directly.
+    """
+    from .video_creator import get_video_job, lumi_edit_storyboard, create_rerender_job  # noqa: PLC0415
+
+    source = get_video_job(job_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail=f"Video job '{job_id}' not found.")
+    if not payload.instruction.strip():
+        raise HTTPException(status_code=400, detail="instruction must not be empty.")
+
+    edited = lumi_edit_storyboard(source.storyboard, payload.instruction)
+    if edited is None:
+        raise HTTPException(status_code=502, detail="LUMI could not apply that edit — try rephrasing, or use manual edit instead.")
+
+    job = create_rerender_job(source_job_id=job_id, storyboard_override=edited)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Video job '{job_id}' not found.")
+    return job.to_dict()
+
+
 class VideoTrimRequest(BaseModel):
     startSeconds: float
     endSeconds: float

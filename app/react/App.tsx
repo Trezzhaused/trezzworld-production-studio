@@ -100,6 +100,9 @@ function VideoEditor({ job, onJobCreated }: { job: VideoJob; onJobCreated?: (job
   const [trimEnd, setTrimEnd] = useState(0);
   const [exportRes, setExportRes] = useState("1080p");
   const [reworkBusy, setReworkBusy] = useState<string | null>(null);
+  const [reworkMode, setReworkMode] = useState<"manual" | "lumi">("manual");
+  const [lumiInstruction, setLumiInstruction] = useState("");
+  const [reworkError, setReworkError] = useState("");
 
   useEffect(() => { setScenes(job.storyboard?.scenes ?? []); }, [job.jobId]);
 
@@ -159,6 +162,30 @@ function VideoEditor({ job, onJobCreated }: { job: VideoJob; onJobCreated?: (job
       onJobCreated?.(newJob);
     } catch (err) {
       console.error("Export failed:", err);
+    } finally {
+      setReworkBusy(null);
+    }
+  };
+
+  const lumiEdit = async () => {
+    if (!lumiInstruction.trim()) return;
+    setReworkBusy("lumi");
+    setReworkError("");
+    try {
+      const res = await fetch(`${API}/video/${job.jobId}/lumi-edit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instruction: lumiInstruction }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "LUMI couldn't apply that edit.");
+      }
+      const newJob: VideoJob = await res.json();
+      onJobCreated?.(newJob);
+      setLumiInstruction("");
+    } catch (err: any) {
+      setReworkError(err.message || "LUMI edit failed.");
     } finally {
       setReworkBusy(null);
     }
@@ -296,15 +323,47 @@ function VideoEditor({ job, onJobCreated }: { job: VideoJob; onJobCreated?: (job
       {/* REWORK-iT — lightweight server-driven edits */}
       {job.status === "done" && (
         <div style={{ borderTop: "1px solid #1e3a5f", paddingTop: 12 }}>
-          <div style={{ color: "#a855f7", fontSize: 11, marginBottom: 8, fontWeight: 700, letterSpacing: 1 }}>
-            ⚒ REWORK-iT
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+            <div style={{ color: "#a855f7", fontSize: 11, fontWeight: 700, letterSpacing: 1 }}>
+              ⚒ REWORK-iT
+            </div>
+            <select
+              value={reworkMode}
+              onChange={(e) => setReworkMode(e.target.value as "manual" | "lumi")}
+              style={{ ...inputStyle, width: 200 }}
+            >
+              <option value="manual">✏ Manual edit</option>
+              <option value="lumi">🤖 Lumi AI assist</option>
+            </select>
           </div>
 
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-            <button onClick={rerender} disabled={reworkBusy !== null} style={btnStyle(reworkBusy === null)}>
-              {reworkBusy === "rerender" ? "⏳ Re-rendering..." : "🔁 Re-render with edited scenes"}
-            </button>
-          </div>
+          {reworkError && (
+            <div style={{ background: "#7f1d1d22", border: "1px solid #ef444444", borderRadius: 6, padding: "6px 10px", color: "#fca5a5", fontSize: 11, marginBottom: 8 }}>
+              {reworkError}
+            </div>
+          )}
+
+          {reworkMode === "lumi" ? (
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <input
+                type="text"
+                value={lumiInstruction}
+                onChange={(e) => setLumiInstruction(e.target.value)}
+                placeholder='e.g. "make scene 3 happen at night" or "swap the first two scenes"'
+                style={{ ...inputStyle, flex: 1 }}
+                onKeyDown={(e) => { if (e.key === "Enter") lumiEdit(); }}
+              />
+              <button onClick={lumiEdit} disabled={reworkBusy !== null || !lumiInstruction.trim()} style={btnStyle(reworkBusy === null && !!lumiInstruction.trim())}>
+                {reworkBusy === "lumi" ? "⏳ Lumi is editing..." : "✨ Apply with Lumi"}
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+              <button onClick={rerender} disabled={reworkBusy !== null} style={btnStyle(reworkBusy === null)}>
+                {reworkBusy === "rerender" ? "⏳ Re-rendering..." : "🔁 Re-render with edited scenes"}
+              </button>
+            </div>
+          )}
 
           <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
             <span style={{ color: "#64748b", fontSize: 11 }}>Trim</span>
@@ -558,10 +617,23 @@ function VideoTab() {
   const [duration, setDuration] = useState(30);
   const [fps, setFps] = useState(24);
   const [resolution, setResolution] = useState("1080p");
+  const [narrate, setNarrate] = useState(true);
+  const [narratorVoice, setNarratorVoice] = useState("en-US-female");
+  const [includeMusic, setIncludeMusic] = useState(true);
+  const [voices, setVoices] = useState<{ id: string; label: string }[]>([]);
+  const [hasImageKey, setHasImageKey] = useState<boolean | null>(null);
   const [jobs, setJobs] = useState<VideoJob[]>([]);
   const [creating, setCreating] = useState(false);
   const [selectedJob, setSelectedJob] = useState<VideoJob | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    fetch(`${API}/video/voices`).then((r) => r.json()).then((d) => setVoices(d.voices ?? [])).catch(() => {});
+    fetch(`${API}/lumi/user-keys`).then((r) => r.json()).then((d) => {
+      const configured = (d.providers ?? []).filter((p: any) => ["huggingface", "fal", "openai"].includes(p.provider) && p.configured);
+      setHasImageKey(configured.length > 0);
+    }).catch(() => {});
+  }, []);
 
   const createJob = async () => {
     if (!prompt.trim()) return;
@@ -576,6 +648,9 @@ function VideoTab() {
           style: activeStyle,
           resolution,
           fps,
+          narrate,
+          narratorVoice,
+          includeMusic,
         }),
       });
       const job: VideoJob = await res.json();
@@ -620,84 +695,84 @@ function VideoTab() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Production style tabs */}
-      <div>
-        <div style={{ color: "#64748b", fontSize: 11, marginBottom: 8, fontWeight: 600, letterSpacing: 1 }}>
-          PRODUCTION STYLE
+      {hasImageKey === false && (
+        <div style={{
+          background: "#78350f22", border: "1px solid #f59e0b44", borderRadius: 6,
+          padding: "8px 12px", color: "#fbbf24", fontSize: 12,
+        }}>
+          ⚠ No image generation API key configured — videos will use a plain text-card
+          renderer instead of real photorealistic frames. Add a free Hugging Face key in
+          the <strong>Settings</strong> tab to unlock real AI-generated visuals.
         </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {PRODUCTION_STYLES.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => setActiveStyle(s.id)}
-              title={s.desc}
-              style={{
-                padding: "6px 14px", borderRadius: 6, fontSize: 12,
-                cursor: "pointer", border: "none", fontWeight: 600,
-                background: activeStyle === s.id ? "#0ea5e9" : "#0f172a",
-                color: activeStyle === s.id ? "#fff" : "#64748b",
-                transition: "all 0.2s",
-              }}
-            >
-              {s.icon} {s.label}
-            </button>
-          ))}
-        </div>
-        <div style={{ color: "#475569", fontSize: 11, marginTop: 6 }}>
-          {PRODUCTION_STYLES.find((s) => s.id === activeStyle)?.desc}
-        </div>
-      </div>
+      )}
 
-      {/* Prompt + settings */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10 }}>
+      {/* Prompt box, Pollo.ai-style: textarea + a pill bar of generation options */}
+      <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 14 }}>
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           placeholder={`Describe your ${activeStyle} video... (e.g., "A lone astronaut walking across a red Martian desert at sunset")`}
           rows={3}
-          style={{ ...inputStyle, resize: "vertical" }}
+          style={{ ...inputStyle, resize: "vertical", border: "none", background: "transparent", padding: "4px 2px", marginBottom: 10 }}
         />
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <div>
-            <div style={{ color: "#64748b", fontSize: 10, marginBottom: 2 }}>Duration (s)</div>
-            <input type="number" value={duration} min={5} max={600} step={5}
-              onChange={(e) => setDuration(parseInt(e.target.value) || 30)}
-              style={{ ...inputStyle, width: 70 }}
-            />
-          </div>
-          <div>
-            <div style={{ color: "#64748b", fontSize: 10, marginBottom: 2 }}>Resolution</div>
-            <select value={resolution} onChange={(e) => setResolution(e.target.value)}
-              style={{ ...inputStyle, width: 70 }}>
-              <option>720p</option>
-              <option>1080p</option>
-              <option>4k</option>
-              <option>vertical</option>
-              <option>square</option>
-            </select>
-          </div>
-          <div>
-            <div style={{ color: "#64748b", fontSize: 10, marginBottom: 2 }}>FPS</div>
-            <select value={fps} onChange={(e) => setFps(parseInt(e.target.value))}
-              style={{ ...inputStyle, width: 70 }}>
-              <option value={24}>24</option>
-              <option value={30}>30</option>
-              <option value={60}>60</option>
-            </select>
-          </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <select value={activeStyle} onChange={(e) => setActiveStyle(e.target.value as ProductionStyle)}
+            title={PRODUCTION_STYLES.find((s) => s.id === activeStyle)?.desc}
+            style={pillStyle}>
+            {PRODUCTION_STYLES.map((s) => <option key={s.id} value={s.id}>{s.icon} {s.label}</option>)}
+          </select>
+
+          <input type="number" value={duration} min={5} max={600} step={5}
+            onChange={(e) => setDuration(parseInt(e.target.value) || 30)}
+            title="Duration (seconds)"
+            style={{ ...pillStyle, width: 64 }}
+          />
+
+          <select value={resolution} onChange={(e) => setResolution(e.target.value)} style={pillStyle}>
+            <option>720p</option>
+            <option>1080p</option>
+            <option>4k</option>
+            <option>vertical</option>
+            <option>square</option>
+          </select>
+
+          <select value={fps} onChange={(e) => setFps(parseInt(e.target.value))} style={pillStyle}>
+            <option value={24}>24 fps</option>
+            <option value={30}>30 fps</option>
+            <option value={60}>60 fps</option>
+          </select>
+
+          <select
+            value={narrate ? narratorVoice : "none"}
+            onChange={(e) => { e.target.value === "none" ? setNarrate(false) : (setNarrate(true), setNarratorVoice(e.target.value)); }}
+            style={pillStyle}
+          >
+            <option value="none">🔇 No narration</option>
+            {voices.map((v) => <option key={v.id} value={v.id}>🎙 {v.label}</option>)}
+          </select>
+
+          <button
+            onClick={() => setIncludeMusic(!includeMusic)}
+            style={{ ...pillStyle, cursor: "pointer", color: includeMusic ? "#38bdf8" : "#64748b" }}
+          >
+            {includeMusic ? "🎵 Music on" : "🔇 Music off"}
+          </button>
+
+          <div style={{ flex: 1 }} />
+
+          <button
+            onClick={createJob}
+            disabled={creating || !prompt.trim()}
+            style={{
+              ...btnStyle(!creating && prompt.trim().length > 0),
+              padding: "10px 20px", fontSize: 13, fontWeight: 700,
+            }}
+          >
+            {creating ? "⏳ Creating..." : `🎬 Generate`}
+          </button>
         </div>
       </div>
-
-      <button
-        onClick={createJob}
-        disabled={creating || !prompt.trim()}
-        style={{
-          ...btnStyle(!creating && prompt.trim().length > 0),
-          padding: "12px 24px", fontSize: 14, fontWeight: 700,
-        }}
-      >
-        {creating ? "⏳ Creating..." : `🎬 Generate ${PRODUCTION_STYLES.find((s) => s.id === activeStyle)?.label} Video`}
-      </button>
 
       {/* Jobs list */}
       {jobs.length > 0 && (
@@ -923,6 +998,119 @@ function MusicTab() {
   );
 }
 
+// ── Settings Tab — API keys (the actual switch that turns on photorealistic gen) ──
+
+interface ProviderInfo {
+  provider: string;
+  name: string;
+  description: string;
+  cost: string;
+  get_key_url: string;
+  recommended: boolean;
+  configured: boolean;
+  key_preview?: string;
+}
+
+function SettingsTab() {
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+
+  const load = async () => {
+    try {
+      const res = await fetch(`${API}/lumi/user-keys`);
+      const data = await res.json();
+      setProviders(data.providers ?? []);
+    } catch (err) {
+      console.error("Failed to load providers:", err);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const save = async (provider: string) => {
+    const apiKey = (drafts[provider] || "").trim();
+    if (!apiKey) return;
+    setSaving(provider);
+    setMessage("");
+    try {
+      const res = await fetch(`${API}/lumi/user-key`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, api_key: apiKey }),
+      });
+      const data = await res.json();
+      setMessage(res.ok ? data.message : (data.detail || "Failed to save key."));
+      setDrafts((d) => ({ ...d, [provider]: "" }));
+      await load();
+    } catch (err) {
+      setMessage("Failed to save key — check your connection.");
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 720 }}>
+      <div>
+        <div style={{ color: "#e2e8f0", fontSize: 16, fontWeight: 700, marginBottom: 4 }}>
+          ⚙ API Keys
+        </div>
+        <div style={{ color: "#64748b", fontSize: 12 }}>
+          Add a Hugging Face or fal.ai key to unlock real photorealistic/3D video frames.
+          Without one, the Video Studio falls back to a plain text-card renderer.
+        </div>
+      </div>
+
+      {message && (
+        <div style={{ background: "#0f2438", border: "1px solid #38bdf8", borderRadius: 6, padding: "8px 12px", color: "#94a3b8", fontSize: 12 }}>
+          {message}
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {providers.map((p) => (
+          <div key={p.provider} style={{
+            background: "#0a0f1a", border: `1px solid ${p.configured ? "#22c55e44" : "#1e3a5f"}`,
+            borderRadius: 8, padding: 14,
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 700 }}>{p.name}</span>
+                {p.recommended && (
+                  <span style={{ background: "#38bdf822", color: "#38bdf8", fontSize: 10, padding: "1px 6px", borderRadius: 8 }}>Recommended</span>
+                )}
+                {p.configured && (
+                  <span style={{ background: "#22c55e22", color: "#22c55e", fontSize: 10, padding: "1px 6px", borderRadius: 8 }}>✓ Configured ({p.key_preview})</span>
+                )}
+              </div>
+              <a href={p.get_key_url} target="_blank" rel="noreferrer" style={{ color: "#38bdf8", fontSize: 11 }}>Get a key ↗</a>
+            </div>
+            <div style={{ color: "#64748b", fontSize: 11, marginBottom: 8 }}>{p.description} · {p.cost}</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type="password"
+                placeholder={p.configured ? "Replace key..." : "Paste API key..."}
+                value={drafts[p.provider] || ""}
+                onChange={(e) => setDrafts((d) => ({ ...d, [p.provider]: e.target.value }))}
+                style={{ ...inputStyle, flex: 1 }}
+              />
+              <button
+                onClick={() => save(p.provider)}
+                disabled={saving !== null || !(drafts[p.provider] || "").trim()}
+                style={btnStyle(saving === null && !!(drafts[p.provider] || "").trim())}
+              >
+                {saving === p.provider ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Shared components ─────────────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: string }) {
@@ -965,15 +1153,24 @@ const inputStyle: React.CSSProperties = {
   fontFamily: "inherit",
 };
 
+// Pollo.ai-style compact option pill (dropdown/button in the generation bar)
+const pillStyle: React.CSSProperties = {
+  background: "#0f172a", border: "1px solid #1e3a5f",
+  borderRadius: 16, padding: "6px 12px", color: "#94a3b8",
+  fontSize: 11, outline: "none", fontFamily: "inherit",
+  width: "auto",
+};
+
 // ── App shell ─────────────────────────────────────────────────────────────────
 
-type Tab = "video" | "music" | "lumi" | "roblox";
+type Tab = "video" | "music" | "lumi" | "roblox" | "settings";
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
-  { id: "video",  label: "Video",  icon: "🎬" },
-  { id: "music",  label: "Music",  icon: "🎵" },
-  { id: "lumi",   label: "LUMI",   icon: "🤖" },
-  { id: "roblox", label: "Roblox", icon: "🎮" },
+  { id: "video",    label: "Video",    icon: "🎬" },
+  { id: "music",    label: "Music",    icon: "🎵" },
+  { id: "lumi",     label: "LUMI",     icon: "🤖" },
+  { id: "roblox",   label: "Roblox",   icon: "🎮" },
+  { id: "settings", label: "Settings", icon: "⚙" },
 ];
 
 export default function App() {
@@ -1040,6 +1237,7 @@ export default function App() {
             Roblox Game Creator — coming in next build
           </div>
         )}
+        {tab === "settings" && <SettingsTab />}
       </div>
     </div>
   );

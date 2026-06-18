@@ -120,8 +120,8 @@ def _call_image_generation_api(
     provider: str,
     api_key: str,
     size: str,
-) -> bytes | None:
-    """Call the OpenAI image generation endpoint."""
+) -> tuple[bytes | None, str]:
+    """Call the OpenAI image generation endpoint. Returns (bytes or None, diagnostic reason)."""
     headers = {
         "Content-Type": "application/json",
         "Authorization": "Bearer " + api_key,
@@ -130,6 +130,7 @@ def _call_image_generation_api(
     payload = json.dumps({"model": "gpt-image-1", "prompt": prompt, "size": size, "n": 1}).encode("utf-8")
 
     endpoints = ["https://api.openai.com/v1/images/generations"] if provider == "openai" else []
+    last_error = "no matching image API endpoint for provider"
 
     for url in endpoints:
         try:
@@ -142,18 +143,19 @@ def _call_image_generation_api(
                         item = images[0]
                         b64_json = item.get("b64_json")
                         if b64_json:
-                            return base64.b64decode(b64_json)
+                            return base64.b64decode(b64_json), ""
                         image_url = item.get("url")
                         if image_url:
                             downloaded = _download_image_from_url(image_url)
                             if downloaded:
-                                return downloaded
-        except urllib.error.HTTPError:
-            continue
-        except Exception:
-            continue
+                                return downloaded, ""
+                last_error = f"OpenAI: unexpected response shape: {str(data)[:200]}"
+        except urllib.error.HTTPError as exc:
+            last_error = f"OpenAI: HTTP {exc.code}: {exc.read().decode('utf-8', errors='replace')[:300]}"
+        except Exception as exc:
+            last_error = f"OpenAI: {exc}"
 
-    return None
+    return None, last_error
 
 
 def _build_scene_image_prompt(
@@ -912,7 +914,7 @@ def _run_video_pipeline(job_id: str) -> None:
                 scene_base_image = None
                 if use_photorealistic and scene_frames > 0:
                     scene_image_path = frames_dir / f"scene_{scene_i+1:03d}.png"
-                    if _generate_photorealistic_scene_image(
+                    image_ok, image_fail_reason = _generate_photorealistic_scene_image(
                         scene=scene,
                         title=title,
                         style=job.style,
@@ -920,7 +922,8 @@ def _run_video_pipeline(job_id: str) -> None:
                         target_path=scene_image_path,
                         image_provider=image_api_info[0],
                         api_key=image_api_info[1],
-                    ):
+                    )
+                    if image_ok:
                         if _PIL_AVAILABLE:
                             try:
                                 from PIL import Image  # noqa: PLC0415
@@ -929,7 +932,11 @@ def _run_video_pipeline(job_id: str) -> None:
                                 scene_base_image = None
                     else:
                         scene_image_path = None
-                        update("rendering", 25 + int(10 * (scene_i + 1) / max(len(scenes), 1)), f"Photorealistic generation failed for scene {scene_i + 1}, using fallback renderer.")
+                        update(
+                            "rendering",
+                            25 + int(10 * (scene_i + 1) / max(len(scenes), 1)),
+                            f"Scene {scene_i + 1}: AI image generation failed ({image_fail_reason[:300]}), using fallback renderer.",
+                        )
 
                 for fi in range(scene_frames):
                     if frame_idx >= total_frames:
@@ -1071,24 +1078,26 @@ def _generate_photorealistic_scene_image(
     target_path: Path,
     image_provider: str,
     api_key: str,
-) -> bool:
-    """Generate a single photorealistic scene image using the best available image API."""
+) -> tuple[bool, str]:
+    """Generate a single photorealistic scene image using the best available image API.
+    Returns (success, diagnostic reason on failure) so callers can surface *why*."""
     from .video_generator_patch import generate_scene_image_ai  # noqa: PLC0415
 
     # Stable Diffusion (HuggingFace) / Wan / Kling (fal.ai) give the strongest
     # photorealistic results and are tried first regardless of which credential
     # triggered this call, since generate_scene_image_ai checks both internally.
-    if generate_scene_image_ai(scene, title, style, resolution, target_path):
-        return True
+    ok, reason = generate_scene_image_ai(scene, title, style, resolution, target_path)
+    if ok:
+        return True, ""
 
     if image_provider != "openai":
-        return False
+        return False, reason
 
     prompt = _build_scene_image_prompt(scene, title, style, resolution)
     size = _api_image_size(resolution)
-    image_bytes = _call_image_generation_api(prompt, image_provider, api_key, size)
+    image_bytes, openai_reason = _call_image_generation_api(prompt, image_provider, api_key, size)
     if image_bytes is None:
-        return False
+        return False, f"{reason} | {openai_reason}"
 
     if _PIL_AVAILABLE:
         try:
@@ -1097,15 +1106,15 @@ def _generate_photorealistic_scene_image(
             img = img.convert("RGB")
             img = _crop_and_resize_image(img, resolution)
             img.save(target_path)
-            return True
-        except Exception:
-            pass
+            return True, ""
+        except Exception as exc:
+            openai_reason = f"OpenAI image saved but failed to process: {exc}"
 
     try:
         target_path.write_bytes(image_bytes)
-        return True
-    except OSError:
-        return False
+        return True, ""
+    except OSError as exc:
+        return False, f"{reason} | {openai_reason} | write failed: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -1172,6 +1181,47 @@ def create_video_job(
 # ---------------------------------------------------------------------------
 # REWORK-iT — lightweight, server-driven edits on an already-rendered video
 # ---------------------------------------------------------------------------
+
+def lumi_edit_storyboard(storyboard: dict[str, Any], instruction: str) -> dict[str, Any] | None:
+    """Ask LUMI to apply a natural-language edit instruction to a storyboard JSON,
+    returning the edited storyboard (same schema) or None if the AI is unavailable
+    or didn't return valid JSON."""
+    from .ai_router import get_router  # noqa: PLC0415
+    from .ollama_provider import get_ollama  # noqa: PLC0415
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are LUMI, a video storyboard editor. You are given a storyboard JSON "
+                "and a user's edit instruction. Apply the instruction and respond with ONLY "
+                "the complete edited storyboard JSON, same schema as the input — no prose, "
+                "no markdown fences. Preserve fields you weren't asked to change."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"STORYBOARD:\n{json.dumps(storyboard)}\n\nINSTRUCTION: {instruction}",
+        },
+    ]
+
+    ollama = get_ollama()
+    if ollama.is_available():
+        result = ollama.super_gemma_chat(messages, temperature=0.4, max_tokens=4000)
+        if result.ok and result.content:
+            parsed = _parse_storyboard_json(result.content)
+            if parsed and parsed.get("scenes"):
+                return parsed
+
+    router = get_router()
+    result = router.chat(messages, role="planner", temperature=0.4, max_tokens=3500)
+    if result.ok and result.content:
+        parsed = _parse_storyboard_json(result.content)
+        if parsed and parsed.get("scenes"):
+            return parsed
+
+    return None
+
 
 def create_rerender_job(
     source_job_id: str,
