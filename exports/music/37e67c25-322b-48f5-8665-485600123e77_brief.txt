@@ -1,0 +1,18 @@
+TrezzWorld Production Studio — Music Brief
+============================================================
+Concept: short intro sting
+Genre: cinematic | BPM: 110 | Mood: epic
+Duration: 5s
+
+============================================================
+
+short intro sting. cinematic orchestral, epic strings, brass, timpani, epic mood, 110 BPM. Professional studio quality, high fidelity, 5 seconds.
+
+============================================================
+To generate real audio, set HF_API_KEY or REPLICATE_API_TOKEN in backend/.env
+Then use this prompt with:
+  - HuggingFace: https://huggingface.co/facebook/musicgen-stereo-small
+  - Replicate: https://replicate.com/meta/musicgen
+  - Suno AI: https://suno.com
+  - Udio: https://udio.com
+MusicGen prompt: short intro sting. cinematic orchestral, epic strings, brass, timpani, epic mood, 110 BPM. Professional studio quality, high fidelity, 5 seconds.
