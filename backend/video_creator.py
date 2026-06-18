@@ -489,30 +489,43 @@ def _truncate(text: str, max_len: int) -> str:
 
 def _find_ffmpeg_executable() -> Path | None:
     """Return a usable ffmpeg executable path if available."""
+    # Check environment variable override first
     env_path = os.environ.get("FFMPEG_PATH")
     if env_path:
         ffmpeg = Path(env_path)
         if ffmpeg.is_file():
             return ffmpeg
 
+    # Check PATH via shutil.which
     ffmpeg_path = shutil.which("ffmpeg")
     if ffmpeg_path:
         return Path(ffmpeg_path)
 
-    # Common Windows locations for Winget / manual FFmpeg installs.
-    candidates = [
-        Path.home() / "AppData" / "Local" / "Microsoft" / "WinGet" / "Packages",
-        Path.home() / "AppData" / "Local" / "CapCut" / "Apps",
-        Path.home() / "AppData" / "Local" / "Programs" / "FFmpeg",
-        Path("C:/Program Files/FFmpeg/bin"),
-        Path("C:/Program Files (x86)/FFmpeg/bin"),
+    # Railway/Nix store paths
+    nix_candidates = list(Path("/nix/store").glob("*/bin/ffmpeg")) if Path("/nix/store").exists() else []
+    for p in sorted(nix_candidates, reverse=True):
+        if p.is_file():
+            return p
+
+    # Common Linux paths
+    linux_candidates = [
+        Path("/usr/bin/ffmpeg"),
+        Path("/usr/local/bin/ffmpeg"),
+        Path("/bin/ffmpeg"),
+        Path("/opt/ffmpeg/bin/ffmpeg"),
     ]
-    for root in candidates:
-        if not root.exists():
-            continue
-        for exe in root.rglob("ffmpeg.exe"):
-            if exe.is_file():
-                return exe
+    for p in linux_candidates:
+        if p.is_file():
+            return p
+
+    # Common Windows paths
+    win_candidates = [
+        Path("C:/Program Files/FFmpeg/bin/ffmpeg.exe"),
+        Path("C:/Program Files (x86)/FFmpeg/bin/ffmpeg.exe"),
+    ]
+    for p in win_candidates:
+        if p.is_file():
+            return p
 
     return None
 

@@ -22,6 +22,22 @@ app.add_middleware(
 def status():
     return {"status": "running", "version": VERSION}
 
+@app.get("/api/debug/ffmpeg")
+def debug_ffmpeg():
+    """Diagnose FFmpeg availability on this server."""
+    import shutil, subprocess
+    from pathlib import Path
+    which = shutil.which("ffmpeg")
+    nix_paths = list(Path("/nix/store").glob("*/bin/ffmpeg")) if Path("/nix/store").exists() else []
+    result = {"which": which, "nix_paths": [str(p) for p in nix_paths[:5]]}
+    if which:
+        try:
+            r = subprocess.run([which, "-version"], capture_output=True, timeout=5)
+            result["version_check"] = r.returncode == 0
+            result["version_output"] = r.stdout.decode()[:200]
+        except Exception as e:
+            result["error"] = str(e)
+    return result
 
 @app.get("/api/meta-development/status")
 def meta_development_status():
