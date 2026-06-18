@@ -572,6 +572,61 @@ def roblox_games_list():
     return {"jobs": list_roblox_jobs()}
 
 
+class RobloxPublishRequest(BaseModel):
+    apiKey: str | None = None
+    universeId: str | None = None
+    placeId: str | None = None
+
+
+@app.post("/api/roblox/game/{job_id}/publish")
+def roblox_game_publish(job_id: str, payload: RobloxPublishRequest):
+    """
+    Publish a completed Roblox game job's generated scripts to a live Roblox
+    experience via the Roblox Open Cloud API.
+
+    Requires a Roblox Open Cloud API key with universe-places:write scope
+    (https://create.roblox.com/credentials), plus the target universe and
+    place ID. Pass them in the request body, or set ROBLOX_API_KEY /
+    ROBLOX_UNIVERSE_ID / ROBLOX_PLACE_ID as environment variables.
+    """
+    from .roblox_creator import get_roblox_job  # noqa: PLC0415
+    from .roblox_publisher import (  # noqa: PLC0415
+        RobloxPublishError,
+        build_place_xml,
+        get_roblox_credentials,
+        publish_place,
+    )
+
+    job = get_roblox_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Roblox job '{job_id}' not found.")
+    if job.status != "done" or not job.scripts:
+        raise HTTPException(status_code=409, detail=f"Game scripts not ready yet. Status: {job.status}")
+
+    try:
+        api_key, universe_id, place_id = get_roblox_credentials(
+            payload.apiKey, payload.universeId, payload.placeId
+        )
+    except RobloxPublishError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    title = job.design_doc.get("title", job.concept[:60])
+    place_xml = build_place_xml(title, job.scripts)
+
+    try:
+        result = publish_place(place_xml, api_key, universe_id, place_id)
+    except RobloxPublishError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return {
+        "jobId": job_id,
+        "universeId": universe_id,
+        "placeId": place_id,
+        "versionNumber": result.get("versionNumber"),
+        "published": True,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Static file serving — serve the built React UI at /
 # Must be registered AFTER all API routes so /api/* is not intercepted.

@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
+import tempfile
 import threading
 import time
 import uuid
@@ -22,9 +24,23 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-EXPORTS_DIR = Path("exports/roblox")
+EXPORTS_DIR = Path(os.environ.get("ROBLOX_EXPORT_DIR", "/tmp/trezzworld/exports/roblox"))
 _JOBS: dict[str, "RobloxJob"] = {}
 _LOCK = threading.Lock()
+
+
+def _resolve_roblox_export_dir() -> Path:
+    """Return a writable export directory, falling back to a temp dir when needed."""
+    try:
+        EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        test_file = EXPORTS_DIR / ".write_test"
+        test_file.write_text("ok")
+        test_file.unlink(missing_ok=True)
+        return EXPORTS_DIR
+    except OSError:
+        fallback = Path(tempfile.gettempdir()) / "trezzworld" / "exports" / "roblox"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
 
 
 # ---------------------------------------------------------------------------
@@ -458,8 +474,8 @@ print("[UIManager] HUD initialized for", player.Name)
 
 def _build_zip(job: RobloxJob, design: dict[str, Any]) -> Path:
     """Package the game project into a ZIP file."""
-    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    zip_path = EXPORTS_DIR / f"{job.job_id}.zip"
+    export_dir = _resolve_roblox_export_dir()
+    zip_path = export_dir / f"{job.job_id}.zip"
     title_slug = re.sub(r"[^a-z0-9]+", "-", design.get("title", "roblox-game").lower()).strip("-")
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:

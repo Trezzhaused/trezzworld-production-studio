@@ -127,8 +127,8 @@ def _call_sd_hf(
             "negative_prompt": negative_prompt,
             "width": min(width, 1024),
             "height": min(height, 1024),
-            "num_inference_steps": 30,
-            "guidance_scale": 7.5,
+            "num_inference_steps": 50,
+            "guidance_scale": 8.5,
         },
     }).encode("utf-8")
 
@@ -193,7 +193,7 @@ def _call_wan_fal(
         "image_size": image_size,
         "num_frames": num_frames,
         "guidance_scale": 7.0,
-        "num_inference_steps": 25,
+        "num_inference_steps": 40,
     }).encode("utf-8")
 
     headers = {
@@ -260,7 +260,7 @@ def _call_kling_fal(
         "prompt": prompt,
         "duration": duration,
         "aspect_ratio": aspect_ratio,
-        "mode": "standard",
+        "mode": "pro",
     }).encode("utf-8")
 
     headers = {

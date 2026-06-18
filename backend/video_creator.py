@@ -63,16 +63,24 @@ def _resolve_video_export_dir() -> Path:
 
 
 def _find_image_api_credentials() -> tuple[str, str] | None:
-    """Return the best available image API provider and key for photorealistic frames."""
+    """Return the best available image API provider and key for photorealistic frames.
+
+    Priority: Stable Diffusion (HuggingFace) and Wan/Kling (fal.ai) produce real
+    photorealistic frames via video_generator_patch and are tried first inside
+    _generate_photorealistic_scene_image; OpenAI's image API is the direct fallback.
+    """
     from .user_key_store import get_user_key_store  # noqa: PLC0415
+    from .video_generator_patch import _get_hf_token, _get_fal_key  # noqa: PLC0415
+
+    if _get_hf_token():
+        return "huggingface", _get_hf_token() or ""
+
+    if _get_fal_key():
+        return "fal", _get_fal_key() or ""
 
     openai_key = os.environ.get("OPENAI_API_KEY") or get_user_key_store().get_key("openai")
     if openai_key:
         return "openai", openai_key
-
-    openrouter_key = os.environ.get("OPENROUTER_API_KEY") or get_user_key_store().get_key("openrouter")
-    if openrouter_key:
-        return "openrouter", openrouter_key
 
     return None
 
@@ -104,7 +112,7 @@ def _call_image_generation_api(
     api_key: str,
     size: str,
 ) -> bytes | None:
-    """Call an OpenAI-compatible or OpenRouter image generation endpoint."""
+    """Call the OpenAI image generation endpoint."""
     headers = {
         "Content-Type": "application/json",
         "Authorization": "Bearer " + api_key,
@@ -112,14 +120,7 @@ def _call_image_generation_api(
     }
     payload = json.dumps({"model": "gpt-image-1", "prompt": prompt, "size": size, "n": 1}).encode("utf-8")
 
-    endpoints = []
-    if provider == "openai":
-        endpoints = ["https://api.openai.com/v1/images/generations"]
-    elif provider == "openrouter":
-        endpoints = [
-            "https://api.openrouter.ai/v1/images/generate",
-            "https://api.openrouter.ai/v1/images/generations",
-        ]
+    endpoints = ["https://api.openai.com/v1/images/generations"] if provider == "openai" else []
 
     for url in endpoints:
         try:
@@ -560,10 +561,11 @@ def _encode_frames_to_mp4(
         "-y",
         "-framerate", str(fps),
         "-i", str(frames_dir / "frame_%06d.png"),
-        "-vf", f"scale={w}:{h}",
+        "-vf", f"scale={w}:{h}:flags=lanczos",
         "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "23",
+        "-preset", "slow",
+        "-crf", "18",
+        "-tune", "film",
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
         str(output_path),
@@ -606,6 +608,16 @@ def _run_video_pipeline(job_id: str) -> None:
         color_palette = storyboard.get("color_palette", ["#0a1628", "#38bdf8"])
         total_duration = min(job.duration_seconds, MAX_DURATION_SECONDS)
 
+        ffmpeg_ready = _ffmpeg_available()
+        if not ffmpeg_ready:
+            update("rendering", 25, "FFmpeg unavailable — skipping frame rendering, creating placeholder MP4…")
+            export_root = _resolve_video_export_dir()
+            output_path = export_root / f"{job_id}.mp4"
+            _write_placeholder_mp4(output_path, title, job.duration_seconds)
+            job.output_path = str(output_path)
+            update("done", 100, "Placeholder MP4 created — FFmpeg is not installed.")
+            return
+
         # Step 2: Render frames
         update("rendering", 25, "Rendering frames…")
 
@@ -630,8 +642,11 @@ def _run_video_pipeline(job_id: str) -> None:
 
         try:
             for scene_i, scene in enumerate(scenes):
-                scene_duration = min(max(1, int(float(scene.get("duration_seconds", 5)) + 0.5)), total_duration - frame_idx // job.fps)
-                scene_frames = scene_duration * job.fps
+                remaining_frames = total_frames - frame_idx
+                if remaining_frames <= 0:
+                    break
+                requested_duration = int(float(scene.get("duration_seconds", 5)) + 0.5)
+                scene_frames = min(max(1, requested_duration) * job.fps, remaining_frames)
 
                 scene_image_path: Path | None = None
                 scene_base_image = None
@@ -756,7 +771,18 @@ def _generate_photorealistic_scene_image(
     image_provider: str,
     api_key: str,
 ) -> bool:
-    """Generate a single photorealistic scene image using an image API."""
+    """Generate a single photorealistic scene image using the best available image API."""
+    from .video_generator_patch import generate_scene_image_ai  # noqa: PLC0415
+
+    # Stable Diffusion (HuggingFace) / Wan / Kling (fal.ai) give the strongest
+    # photorealistic results and are tried first regardless of which credential
+    # triggered this call, since generate_scene_image_ai checks both internally.
+    if generate_scene_image_ai(scene, title, style, resolution, target_path):
+        return True
+
+    if image_provider != "openai":
+        return False
+
     prompt = _build_scene_image_prompt(scene, title, style, resolution)
     size = _api_image_size(resolution)
     image_bytes = _call_image_generation_api(prompt, image_provider, api_key, size)

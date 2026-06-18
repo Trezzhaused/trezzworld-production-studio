@@ -55,6 +55,22 @@ PROVIDER_CATALOGUE: dict[str, dict[str, Any]] = {
         "recommended": False,
         "priority": 4,
     },
+    "huggingface": {
+        "name": "Hugging Face",
+        "description": "Stable Diffusion XL/3 image generation for photorealistic video frames.",
+        "cost": "Free tier included (Inference API).",
+        "get_key_url": "https://huggingface.co/settings/tokens",
+        "recommended": True,
+        "priority": 5,
+    },
+    "fal": {
+        "name": "fal.ai",
+        "description": "Wan 2.2 / Kling video generation, used as a photorealistic frame fallback.",
+        "cost": "Pay-as-you-go, free trial credits included.",
+        "get_key_url": "https://fal.ai/dashboard/keys",
+        "recommended": False,
+        "priority": 6,
+    },
 }
 
 
