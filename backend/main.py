@@ -581,3 +581,43 @@ _RENDERER_DIR = Path(__file__).parent.parent / "dist" / "renderer"
 if _RENDERER_DIR.is_dir():
     from fastapi.staticfiles import StaticFiles  # noqa: PLC0415
     app.mount("/", StaticFiles(directory=str(_RENDERER_DIR), html=True), name="ui")
+
+@app.post("/api/debug/video-test")
+def debug_video_test():
+    """Run a minimal FFmpeg encode test on Railway."""
+    import subprocess, tempfile, shutil
+    from pathlib import Path
+    
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return {"error": "ffmpeg not found"}
+    
+    # Create a test frame using pure Python (no Pillow needed)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        # Write a minimal valid PNG (1x1 red pixel) as test frame
+        import struct, zlib
+        def make_png(w, h, r, g, b):
+            def chunk(name, data):
+                c = zlib.crc32(name + data) & 0xffffffff
+                return struct.pack('>I', len(data)) + name + data + struct.pack('>I', c)
+            raw = b'\x00' + bytes([r, g, b]) * w
+            idat = zlib.compress(raw * h)
+            return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + chunk(b'IDAT', idat) + chunk(b'IEND', b''))
+        
+        # Write 10 identical frames
+        for i in range(10):
+            (tmp / f"frame_{i:06d}.png").write_bytes(make_png(320, 240, 255, 0, 0))
+        
+        out = tmp / "test.mp4"
+        cmd = [ffmpeg, "-y", "-framerate", "10", "-i", str(tmp / "frame_%06d.png"),
+               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)]
+        result = subprocess.run(cmd, capture_output=True, timeout=30)
+        
+        return {
+            "ffmpeg": ffmpeg,
+            "returncode": result.returncode,
+            "stdout": result.stdout.decode()[-500:],
+            "stderr": result.stderr.decode()[-500:],
+            "output_size": out.stat().st_size if out.exists() else 0
+        }
