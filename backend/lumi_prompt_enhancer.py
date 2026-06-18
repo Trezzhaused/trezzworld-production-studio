@@ -106,6 +106,7 @@ Respond with valid JSON matching this exact schema:
       "title": "string",
       "duration_seconds": number,
       "visual_description": "string — what the viewer sees",
+      "narration": "string — what the voiceover narrator says during this scene",
       "text_overlay": "string or null",
       "transition_in": "cut | fade | dissolve | wipe",
       "transition_out": "cut | fade | dissolve | wipe",

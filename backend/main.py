@@ -353,6 +353,9 @@ class VideoCreateRequest(BaseModel):
     style: str = "cinematic"
     resolution: str = "1080p"
     fps: int = 24
+    narrate: bool = True
+    narratorVoice: str = "en-US-female"
+    includeMusic: bool = True
 
 
 @app.post("/api/video/create")
@@ -369,8 +372,18 @@ def video_create(payload: VideoCreateRequest):
         style=payload.style,
         resolution_label=payload.resolution,
         fps=payload.fps,
+        narrate=payload.narrate,
+        narrator_voice=payload.narratorVoice,
+        include_music=payload.includeMusic,
     )
     return job.to_dict()
+
+
+@app.get("/api/video/voices")
+def video_voices():
+    """List available narration voices (male/female, English accents + foreign languages)."""
+    from .narration_engine import get_narrator_voices  # noqa: PLC0415
+    return {"voices": get_narrator_voices()}
 
 
 @app.get("/api/video/{job_id}/status")

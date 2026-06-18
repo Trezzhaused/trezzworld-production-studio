@@ -48,8 +48,8 @@ try:
 except ImportError:
     _SCIPY_AVAILABLE = False
 
-EXPORTS_DIR = Path("exports/music")
-ARCHIVE_DIR = Path("exports/archive/music")
+EXPORTS_DIR = Path(os.environ.get("MUSIC_EXPORT_DIR", "/tmp/trezzworld/exports/music"))
+ARCHIVE_DIR = Path(os.environ.get("MUSIC_ARCHIVE_DIR", "/tmp/trezzworld/exports/archive/music"))
 _SAMPLE_RATE = 32000
 _LOCK = threading.Lock()
 _JOBS: dict[str, "MusicJob"] = {}
@@ -467,6 +467,36 @@ def _build_musicgen_prompt(job: "MusicJob") -> str:
 def _build_sfx_prompt(job: "MusicJob") -> str:
     """Build prompt for sound effects generation."""
     return f"sound effects for {job.concept}, {job.mood}, high quality audio"
+
+
+# ── Used by video_creator.py to generate a background music bed ─────────────
+
+def _build_audio_bed_for_video(
+    concept: str,
+    genre: str,
+    mood: str,
+    bpm: int,
+    duration_seconds: int,
+    output_path: Path,
+) -> bool:
+    """Generate a MusicGen background bed sized to a video's duration. Returns False on failure."""
+    hf_token = _get_hf_token()
+    if not hf_token:
+        return False
+
+    prompt = f"{genre} music, {mood}, {concept}, {bpm} BPM, high quality, studio quality, instrumental"
+    duration_seconds = max(5, min(duration_seconds, 600))
+
+    if duration_seconds <= 28:
+        audio_bytes = _generate_musicgen(prompt, duration_seconds, hf_token=hf_token)
+        if not audio_bytes:
+            return False
+        return _save_audio_bytes(audio_bytes, output_path)
+
+    chunks = _generate_musicgen_long(prompt, duration_seconds, hf_token=hf_token)
+    if not chunks:
+        return False
+    return _concat_audio_chunks(chunks, output_path)
 
 
 # ── Procedural fallback (improved) ───────────────────────────────────────────

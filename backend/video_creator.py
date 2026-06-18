@@ -244,6 +244,9 @@ class VideoJob:
     style: str
     resolution: tuple[int, int]
     fps: int
+    narrate: bool = True
+    narrator_voice: str = "en-US-female"
+    include_music: bool = True
     status: str = "queued"       # queued | generating_storyboard | rendering | encoding | done | error
     progress: int = 0            # 0–100
     message: str = ""
@@ -261,6 +264,9 @@ class VideoJob:
             "style": self.style,
             "resolution": f"{self.resolution[0]}x{self.resolution[1]}",
             "fps": self.fps,
+            "narrate": self.narrate,
+            "narratorVoice": self.narrator_voice,
+            "includeMusic": self.include_music,
             "status": self.status,
             "progress": self.progress,
             "message": self.message,
@@ -347,6 +353,7 @@ def _placeholder_storyboard(job: VideoJob) -> dict[str, Any]:
             "title": f"Scene {i + 1}",
             "duration_seconds": dur,
             "visual_description": f"{job.concept} — segment {i + 1} of {num_scenes}",
+            "narration": f"{job.concept} — part {i + 1} of {num_scenes}.",
             "text_overlay": job.concept if i == 0 else None,
             "transition_in": "cut" if i > 0 else "fade",
             "transition_out": "fade" if i == num_scenes - 1 else "cut",
@@ -577,6 +584,107 @@ def _encode_frames_to_mp4(
         return False
 
 
+def _mux_audio_into_video(video_path: Path, audio_path: Path, output_path: Path) -> bool:
+    """Combine a silent video with an audio track into a final MP4."""
+    ffmpeg = _find_ffmpeg_executable()
+    if ffmpeg is None:
+        return False
+    cmd = [
+        str(ffmpeg),
+        "-y",
+        "-i", str(video_path),
+        "-i", str(audio_path),
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-shortest",
+        str(output_path),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=300)
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def _mix_audio_tracks(narration_path: Path | None, music_path: Path | None, output_path: Path) -> Path | None:
+    """Mix narration (full volume) with a music bed (reduced volume) into one file."""
+    ffmpeg = _find_ffmpeg_executable()
+    if ffmpeg is None:
+        return narration_path or music_path
+
+    if narration_path and music_path:
+        cmd = [
+            str(ffmpeg), "-y",
+            "-i", str(narration_path),
+            "-i", str(music_path),
+            "-filter_complex", "[1:a]volume=0.22[bg];[0:a][bg]amix=inputs=2:duration=longest:dropout_transition=2",
+            str(output_path),
+        ]
+    elif narration_path:
+        cmd = [str(ffmpeg), "-y", "-i", str(narration_path), "-c:a", "copy", str(output_path)]
+    elif music_path:
+        cmd = [str(ffmpeg), "-y", "-i", str(music_path), str(output_path)]
+    else:
+        return None
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=180)
+        return output_path if result.returncode == 0 else (narration_path or music_path)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return narration_path or music_path
+
+
+def _build_audio_track(
+    job: "VideoJob",
+    storyboard: dict[str, Any],
+    scenes: list[dict[str, Any]],
+    total_duration: int,
+    work_dir: Path,
+    narrate: bool,
+    narrator_voice: str,
+    include_music: bool,
+) -> Path | None:
+    """Generate narration + a music bed and mix them into a single audio file."""
+    narration_path: Path | None = None
+    music_path: Path | None = None
+
+    if narrate:
+        from .narration_engine import synthesize_narration  # noqa: PLC0415
+        script = " ".join(
+            (scene.get("narration") or scene.get("visual_description") or "").strip()
+            for scene in scenes
+            if (scene.get("narration") or scene.get("visual_description"))
+        ).strip()
+        if script:
+            candidate = work_dir / "narration.mp3"
+            if synthesize_narration(script, narrator_voice, candidate):
+                narration_path = candidate
+
+    if include_music:
+        try:
+            from .music_creator import _build_audio_bed_for_video  # noqa: PLC0415
+            audio = storyboard.get("audio", {})
+            candidate = work_dir / "music.wav"
+            if _build_audio_bed_for_video(
+                concept=job.concept,
+                genre=audio.get("music_genre", "cinematic"),
+                mood=audio.get("mood", "epic"),
+                bpm=int(audio.get("bpm", 120) or 120),
+                duration_seconds=total_duration,
+                output_path=candidate,
+            ):
+                music_path = candidate
+        except Exception:
+            music_path = None
+
+    if narration_path is None and music_path is None:
+        return None
+
+    mixed_path = work_dir / "audio_mix.wav"
+    return _mix_audio_tracks(narration_path, music_path, mixed_path)
+
+
 # ---------------------------------------------------------------------------
 # Pipeline executor (runs in background thread)
 # ---------------------------------------------------------------------------
@@ -716,19 +824,45 @@ def _run_video_pipeline(job_id: str) -> None:
 
         # Step 3: Encode to MP4
         update("encoding", 82, "Encoding MP4…")
+        silent_path = export_root / f"{job_id}_silent.mp4"
         output_path = export_root / f"{job_id}.mp4"
 
         if _ffmpeg_available():
-            success = _encode_frames_to_mp4(frames_dir, output_path, job.fps, job.resolution)
+            success = _encode_frames_to_mp4(frames_dir, silent_path, job.fps, job.resolution)
         else:
             success = False
 
         if not success:
             # Fallback: create a minimal MP4-compatible placeholder
             _write_placeholder_mp4(output_path, title, job.duration_seconds)
+        else:
+            # Step 4: Build narration + music and mux into the final video
+            audio_path = None
+            if job.narrate or job.include_music:
+                update("encoding", 88, "Generating narration and music…")
+                try:
+                    audio_path = _build_audio_track(
+                        job=job,
+                        storyboard=storyboard,
+                        scenes=scenes,
+                        total_duration=total_duration,
+                        work_dir=frames_dir.parent,
+                        narrate=job.narrate,
+                        narrator_voice=job.narrator_voice,
+                        include_music=job.include_music,
+                    )
+                except Exception:
+                    audio_path = None
+
+            if audio_path is not None:
+                update("encoding", 95, "Mixing audio into video…")
+                if not _mux_audio_into_video(silent_path, audio_path, output_path):
+                    shutil.copy(silent_path, output_path)
+            else:
+                shutil.copy(silent_path, output_path)
+            silent_path.unlink(missing_ok=True)
 
         # Clean up frames
-        import shutil  # noqa: PLC0415
         shutil.rmtree(frames_dir.parent, ignore_errors=True)
 
         update("done", 100, f"MP4 ready: {output_path.name}")
@@ -829,6 +963,9 @@ def create_video_job(
     style: str = "cinematic",
     resolution_label: str = "1080p",
     fps: int = DEFAULT_FPS,
+    narrate: bool = True,
+    narrator_voice: str = "en-US-female",
+    include_music: bool = True,
 ) -> VideoJob:
     """Create and queue a new video generation job."""
     # Clamp duration
@@ -852,6 +989,9 @@ def create_video_job(
         style=style,
         resolution=resolution,
         fps=fps,
+        narrate=narrate,
+        narrator_voice=narrator_voice,
+        include_music=include_music,
     )
 
     with _LOCK:
