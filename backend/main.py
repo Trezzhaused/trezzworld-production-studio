@@ -1002,6 +1002,45 @@ def debug_image_test():
     }
 
 
+@app.get("/api/debug/roblox-test")
+def debug_roblox_test(universeId: str | None = None):
+    """
+    Read-only connectivity check for the Roblox Open Cloud API key — lists
+    Game Passes for a universe (never publishes or creates anything). Use
+    this to confirm ROBLOX_API_KEY actually authenticates before trying a
+    real publish/monetization action.
+
+    Pass ?universeId=... to test a specific universe, or set
+    ROBLOX_UNIVERSE_ID as an environment variable to test the default one.
+    """
+    import os
+    from .roblox_oauth import get_valid_access_token
+    from .roblox_publisher import RobloxPublishError, list_game_passes
+
+    api_key = os.environ.get("ROBLOX_API_KEY")
+    bearer_token = get_valid_access_token()
+    resolved_universe_id = universeId or os.environ.get("ROBLOX_UNIVERSE_ID")
+
+    configured = {"apiKey": api_key is not None, "oauthSignedIn": bearer_token is not None}
+    if not api_key and not bearer_token:
+        return {"ok": False, "configured": configured, "reason": "No Roblox credentials configured (ROBLOX_API_KEY not set, not signed in via OAuth)."}
+    if not resolved_universe_id:
+        return {"ok": False, "configured": configured, "reason": "No universeId provided and ROBLOX_UNIVERSE_ID is not set."}
+
+    auth_kwargs = {"bearer_token": bearer_token} if bearer_token else {"api_key": api_key}
+    try:
+        result = list_game_passes(resolved_universe_id, **auth_kwargs)
+    except RobloxPublishError as exc:
+        return {"ok": False, "configured": configured, "universeId": resolved_universe_id, "reason": str(exc)}
+
+    return {
+        "ok": True,
+        "configured": configured,
+        "universeId": resolved_universe_id,
+        "gamePassCount": len(result.get("gamePasses", [])) if isinstance(result, dict) else None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Static file serving — serve the built React UI at /
 # Must be registered AFTER all API routes so /api/* is not intercepted.
