@@ -14,7 +14,7 @@ WORKDIR /app
 # Install system dependencies: FFmpeg for video encoding, plus Inkscape/GIMP/
 # FreeCAD/Xvfb backing LUMI's creative-tool capabilities (backend/lumi_creative_tools.py)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg inkscape gimp freecad xvfb && \
+    ffmpeg inkscape gimp freecad xvfb xauth && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
