@@ -140,9 +140,17 @@ def lumi_chat(payload: LumiChatRequest):
     # instead of letting the chat model hallucinate having "attached" one —
     # plain chat completions have no file I/O of their own.
     image_id: str | None = None
+    image_url_override: str | None = None
     image_note = ""
     from .lumi_image_export import wants_visual_output, has_image_credentials, generate_lumi_image  # noqa: PLC0415
-    if wants_visual_output(payload.message):
+    from .lumi_creative_tools import wants_vector_output, generate_vector_svg, save_output  # noqa: PLC0415
+    if wants_vector_output(payload.message):
+        png, _svg, vector_error = generate_vector_svg(payload.message)
+        if png is not None:
+            image_url_override = f"/api/lumi/tools/export/{save_output(png, 'png')}.png"
+        else:
+            image_note = f"\n\n[Vector generation attempted but failed: {vector_error[:200]}]"
+    elif wants_visual_output(payload.message):
         if has_image_credentials():
             image_id, image_fail_reason = generate_lumi_image(payload.message)
             if image_id is None:
@@ -175,7 +183,7 @@ def lumi_chat(payload: LumiChatRequest):
         "content": content,
         "model": model_used,
         "ok": result.ok,
-        "imageUrl": f"/api/lumi/export/{image_id}" if image_id else None,
+        "imageUrl": image_url_override or (f"/api/lumi/export/{image_id}" if image_id else None),
     }
 
 
@@ -187,6 +195,100 @@ def lumi_export_image(image_id: str):
     if path is None:
         raise HTTPException(status_code=404, detail="Image not found or expired.")
     return FileResponse(path=str(path), media_type="image/png", filename=f"lumi-{image_id}.png")
+
+
+# ---------------------------------------------------------------------------
+# LUMI Creative Tools — Inkscape (vector), GIMP (raster filters), FreeCAD (CAD)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/lumi/tools/status")
+def lumi_tools_status():
+    """Which creative tools actually work in this environment right now."""
+    from .lumi_creative_tools import check_tools  # noqa: PLC0415
+    return check_tools()
+
+
+class LumiVectorRequest(BaseModel):
+    prompt: str
+    width: int = 512
+    height: int = 512
+
+
+@app.post("/api/lumi/tools/vector")
+def lumi_tools_vector(payload: LumiVectorRequest):
+    """LUMI authors SVG markup for the prompt; Inkscape validates/renders it (self-healing on parse errors)."""
+    from .lumi_creative_tools import generate_vector_svg, save_output  # noqa: PLC0415
+
+    png, svg_text, error = generate_vector_svg(payload.prompt, payload.width, payload.height)
+    if png is None:
+        raise HTTPException(status_code=502, detail=error or "Vector generation failed.")
+    job_id = save_output(png, "png")
+    return {"imageUrl": f"/api/lumi/tools/export/{job_id}.png", "svg": svg_text}
+
+
+class LumiImageFilterRequest(BaseModel):
+    imageId: str
+    operation: str
+    width: int | None = None
+    height: int | None = None
+    amount: int | None = None
+
+
+@app.post("/api/lumi/tools/image-filter")
+def lumi_tools_image_filter(payload: LumiImageFilterRequest):
+    """Apply a whitelisted GIMP filter to a previously-generated LUMI image."""
+    from .lumi_image_export import get_image_path  # noqa: PLC0415
+    from .lumi_creative_tools import apply_image_filter, save_output, CreativeToolError  # noqa: PLC0415
+
+    src_path = get_image_path(payload.imageId)
+    if src_path is None:
+        raise HTTPException(status_code=404, detail="Source image not found or expired.")
+    params = {k: v for k, v in {"width": payload.width, "height": payload.height, "amount": payload.amount}.items() if v is not None}
+    try:
+        result = apply_image_filter(src_path.read_bytes(), payload.operation, **params)
+    except CreativeToolError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    job_id = save_output(result, "png")
+    return {"imageUrl": f"/api/lumi/tools/export/{job_id}.png"}
+
+
+class LumiCadRequest(BaseModel):
+    shape: str
+    length: float | None = None
+    width: float | None = None
+    height: float | None = None
+    radius: float | None = None
+    radius1: float | None = None
+    radius2: float | None = None
+
+
+@app.post("/api/lumi/tools/cad")
+def lumi_tools_cad(payload: LumiCadRequest):
+    """Generate a parametric primitive (box/cylinder/sphere/cone) as an STL file via FreeCAD."""
+    from .lumi_creative_tools import generate_cad_primitive, save_output, CreativeToolError  # noqa: PLC0415
+
+    dims = {k: v for k, v in payload.model_dump().items() if k != "shape" and v is not None}
+    try:
+        result = generate_cad_primitive(payload.shape, **dims)
+    except CreativeToolError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    job_id = save_output(result, "stl")
+    return {"modelUrl": f"/api/lumi/tools/export/{job_id}.stl"}
+
+
+@app.get("/api/lumi/tools/export/{filename}")
+def lumi_tools_export(filename: str):
+    """Download a creative-tool output (PNG or STL) by its generated job id."""
+    from .lumi_creative_tools import get_output_path  # noqa: PLC0415
+
+    job_id, _, ext = filename.rpartition(".")
+    if not job_id or ext not in ("png", "stl"):
+        raise HTTPException(status_code=400, detail="Invalid export filename.")
+    path = get_output_path(job_id, ext)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Export not found or expired.")
+    media_type = "image/png" if ext == "png" else "model/stl"
+    return FileResponse(path=str(path), media_type=media_type, filename=f"lumi-{filename}")
 
 
 @app.get("/api/lumi/chat/history")
