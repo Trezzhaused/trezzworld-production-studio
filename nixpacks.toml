@@ -1,8 +1,5 @@
 [phases.setup]
-# inkscape/gimp/freecad/xvfb-run back LUMI's creative-tool capabilities
-# (backend/lumi_creative_tools.py) — vector SVG rendering, raster image
-# filters, and parametric CAD primitives.
-nixPkgs = ["ffmpeg", "python312", "nodejs_20", "inkscape", "gimp", "freecad", "xvfb-run"]
+nixPkgs = ["ffmpeg", "python312", "nodejs_20"]
 
 [phases.install]
 cmds = ["pip install -r backend/requirements.txt", "npm ci"]
