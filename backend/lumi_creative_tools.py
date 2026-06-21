@@ -83,6 +83,14 @@ def _xvfb_wrap(cmd: list[str]) -> list[str]:
     return cmd
 
 
+def _tail_error(proc: subprocess.CompletedProcess, fallback: str) -> str:
+    """Errors/tracebacks land at the END of these tools' output, after a startup
+    banner — slicing the head (as a naive [:N] would) shows the banner, not the
+    failure. Combine both streams and take the tail instead."""
+    combined = "\n".join(s for s in (proc.stdout, proc.stderr) if s).strip()
+    return (combined or fallback)[-800:]
+
+
 # ---------------------------------------------------------------------------
 # Self-check — gates whether each tool's capability is exposed at all
 # ---------------------------------------------------------------------------
@@ -143,7 +151,7 @@ def render_svg_to_png(svg_text: str, width: int = 512, height: int = 512) -> byt
             f"--export-width={width}", f"--export-height={height}",
         ], timeout=30)
         if proc.returncode != 0 or not png_path.exists():
-            raise CreativeToolError((proc.stderr or proc.stdout or "Inkscape render failed.").strip()[:500])
+            raise CreativeToolError(_tail_error(proc, "Inkscape render failed."))
         return png_path.read_bytes()
 
 
@@ -228,7 +236,7 @@ def apply_image_filter(image_bytes: bytes, operation: str, **params) -> bytes:
         cmd = _xvfb_wrap([GIMP_BIN, "-i", "-b", script, "-b", "(gimp-quit 0)"])
         proc = _run(cmd, timeout=60)
         if proc.returncode != 0 or not out_path.exists():
-            raise CreativeToolError((proc.stderr or proc.stdout or "GIMP filter failed.").strip()[:500])
+            raise CreativeToolError(_tail_error(proc, "GIMP filter failed."))
         return out_path.read_bytes()
 
 
@@ -261,8 +269,12 @@ def _freecad_script(shape: str, out_path: str, **dims) -> str:
     return (
         "import FreeCAD as App\n"
         "import Part\n"
+        "doc = App.newDocument('gen')\n"
         f"shape = {make}\n"
-        f"Part.export([shape], {out_path!r})\n"
+        "obj = doc.addObject('Part::Feature', 'Shape')\n"
+        "obj.Shape = shape\n"
+        "doc.recompute()\n"
+        f"Part.export([obj], {out_path!r})\n"
     )
 
 
@@ -276,5 +288,5 @@ def generate_cad_primitive(shape: str, **dims) -> bytes:
         script_path.write_text(_freecad_script(shape, str(out_path), **dims), encoding="utf-8")
         proc = _run([FREECAD_BIN, str(script_path)], timeout=30, cwd=tmp)
         if proc.returncode != 0 or not out_path.exists():
-            raise CreativeToolError((proc.stderr or proc.stdout or "FreeCAD generation failed.").strip()[:500])
+            raise CreativeToolError(_tail_error(proc, "FreeCAD generation failed."))
         return out_path.read_bytes()
