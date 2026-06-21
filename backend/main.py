@@ -731,9 +731,13 @@ def _resolve_roblox_auth(
     place_id_override: str | None,
     job_universe_id: str | None,
     job_place_id: str | None,
+    prefer_oauth: bool = True,
 ) -> tuple[dict, str, str]:
     """Resolve (auth_kwargs, universe_id, place_id) for an Open Cloud call — prefers a
-    signed-in Roblox OAuth session over a static admin API key when both are available."""
+    signed-in Roblox OAuth session over a static admin API key when both are available.
+
+    Set prefer_oauth=False for place publishing: Roblox Open Cloud does not accept OAuth
+    tokens for publishing places (staff-confirmed, devforum.com/t/3615911), only API keys."""
     import os  # noqa: PLC0415
     from .roblox_oauth import get_valid_access_token  # noqa: PLC0415
     from .roblox_publisher import RobloxPublishError  # noqa: PLC0415
@@ -745,11 +749,13 @@ def _resolve_roblox_auth(
             "No universeId/placeId — set them when creating the game, or provide them now."
         )
 
-    bearer_token = get_valid_access_token()
+    bearer_token = get_valid_access_token() if prefer_oauth else None
     api_key = explicit_api_key or os.environ.get("ROBLOX_API_KEY")
     if not bearer_token and not api_key:
         raise RobloxPublishError(
-            "No Roblox credentials — sign in with Roblox, or configure ROBLOX_API_KEY."
+            "No Roblox credentials — configure ROBLOX_API_KEY."
+            if not prefer_oauth
+            else "No Roblox credentials — sign in with Roblox, or configure ROBLOX_API_KEY."
         )
     auth_kwargs = {"bearer_token": bearer_token} if bearer_token else {"api_key": api_key}
     return auth_kwargs, str(universe_id), str(place_id)
@@ -767,8 +773,9 @@ def roblox_game_publish(job_id: str, payload: RobloxPublishRequest):
     Publish a completed Roblox game job's generated scripts to a live Roblox
     experience via the Roblox Open Cloud API.
 
-    Uses the signed-in Roblox OAuth session (see /api/roblox/oauth/login) if
-    available, otherwise falls back to a static ROBLOX_API_KEY. Uses the
+    Always uses ROBLOX_API_KEY (or the explicit apiKey in the request) — Roblox
+    Open Cloud does not accept OAuth tokens for publishing places, only API
+    keys, regardless of whether a Roblox OAuth session is signed in. Uses the
     universeId/placeId stored on the job (set at creation time) unless
     overridden in the request body.
     """
@@ -783,7 +790,8 @@ def roblox_game_publish(job_id: str, payload: RobloxPublishRequest):
 
     try:
         auth_kwargs, universe_id, place_id = _resolve_roblox_auth(
-            payload.apiKey, payload.universeId, payload.placeId, job.universe_id, job.place_id
+            payload.apiKey, payload.universeId, payload.placeId, job.universe_id, job.place_id,
+            prefer_oauth=False,
         )
     except RobloxPublishError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

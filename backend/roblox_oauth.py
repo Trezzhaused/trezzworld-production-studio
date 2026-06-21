@@ -36,8 +36,11 @@ _TOKEN_URL = "https://apis.roblox.com/oauth/v1/token"
 _USERINFO_URL = "https://apis.roblox.com/oauth/v1/userinfo"
 
 # Identity scopes (openid/profile) plus the Open Cloud resource scopes needed
-# to publish places and manage monetization on the signed-in user's behalf.
-SCOPES = "openid profile universe-place:write universe-place:read game-pass:write game-pass:read developer-product:write developer-product:read"
+# to manage monetization on the signed-in user's behalf. Place publishing has
+# no OAuth scope — Roblox staff confirmed Open Cloud place publishing only
+# accepts API keys, not OAuth tokens (devforum.com/t/3615911) — so publishing
+# always falls back to the stored API key regardless of OAuth sign-in state.
+SCOPES = "openid profile game-pass:write game-pass:read developer-product:write developer-product:read"
 
 # In-memory only — short-lived (minutes), doesn't need to survive a restart.
 _pending_states: dict[str, str] = {}
