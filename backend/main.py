@@ -1042,6 +1042,92 @@ def debug_roblox_test(universeId: str | None = None):
 
 
 # ---------------------------------------------------------------------------
+# Privacy Policy & Terms of Service — required for Roblox OAuth app review
+# ---------------------------------------------------------------------------
+
+from fastapi.responses import HTMLResponse  # noqa: E402
+
+_LEGAL_PAGE_STYLE = """
+<style>
+  body { background:#020817; color:#e2e8f0; font-family:'Inter','Segoe UI',system-ui,sans-serif;
+         max-width:760px; margin:0 auto; padding:40px 24px 80px; line-height:1.6; }
+  h1 { font-size:28px; } h2 { font-size:20px; margin-top:36px; color:#38bdf8; }
+  a { color:#38bdf8; } small { color:#64748b; }
+</style>
+"""
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy_policy():
+    return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Privacy Policy — TrezzHaus Studio</title>{_LEGAL_PAGE_STYLE}</head><body>
+<h1>Privacy Policy</h1>
+<p><small>Last updated 2026-06-21. This is a baseline policy for the TrezzHaus Studio app
+(studio.trezzhaus.com) and its connection to Roblox. It has not been reviewed by an attorney —
+review before relying on it for a product handling student/child data at scale.</small></p>
+
+<h2>What we collect</h2>
+<p>When you connect your Roblox account via "Sign in with Roblox," we receive only what the
+following OAuth scopes provide: your Roblox user ID, username, and display name (openid,
+profile), and the ability to act on experiences, Game Passes, and Developer Products you
+already own (universe-place, game-pass, developer-product scopes). We do not receive your
+Roblox password — sign-in happens entirely on Roblox's own servers.</p>
+
+<h2>How we use it</h2>
+<p>This data is used solely to let you publish places and manage monetization for your own
+Roblox experiences through this app. We do not sell, rent, or share this data with third
+parties, except Roblox itself (as the platform the data originates from).</p>
+
+<h2>Data storage</h2>
+<p>OAuth tokens are stored in a private database on our hosting provider (Railway) and are
+used only to make authenticated calls to Roblox's Open Cloud API on your behalf. You can
+disconnect your account at any time, which deletes the stored tokens.</p>
+
+<h2>Children's privacy</h2>
+<p>This app is intended for use by educators and developers, not directly by children. If
+this product is extended to be used by K-12 students, additional COPPA-compliant safeguards
+(parental consent, data minimization, no behavioral advertising) will be required before
+collecting any data from users under 13 — consult legal counsel before that expansion.</p>
+
+<h2>Contact</h2>
+<p>Questions about this policy: <a href="mailto:dreambigusa@gmail.com">dreambigusa@gmail.com</a></p>
+</body></html>"""
+
+
+@app.get("/terms", response_class=HTMLResponse)
+def terms_of_service():
+    return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Terms of Service — TrezzHaus Studio</title>{_LEGAL_PAGE_STYLE}</head><body>
+<h1>Terms of Service</h1>
+<p><small>Last updated 2026-06-21. Baseline terms for the TrezzHaus Studio app
+(studio.trezzhaus.com). Not reviewed by an attorney — review before relying on it at scale.</small></p>
+
+<h2>Use of this app</h2>
+<p>This app is provided to help create and publish content to Roblox, including places,
+Game Passes, and Developer Products, using your own Roblox account credentials via OAuth.
+You are responsible for complying with Roblox's own Terms of Use and Community Standards
+for any content you publish through this app.</p>
+
+<h2>No warranty</h2>
+<p>This app is provided "as is," without warranty of any kind. We are not responsible for
+any loss of data, lost Roblox account access, or other damages arising from use of this
+app, to the maximum extent permitted by law.</p>
+
+<h2>Account connection</h2>
+<p>Connecting your Roblox account is optional and can be revoked at any time from within
+the app. We act on your Roblox experiences only within the scopes you explicitly grant
+during the Roblox OAuth consent flow.</p>
+
+<h2>Changes</h2>
+<p>These terms may be updated as the app evolves. Continued use after changes constitutes
+acceptance of the updated terms.</p>
+
+<h2>Contact</h2>
+<p>Questions about these terms: <a href="mailto:dreambigusa@gmail.com">dreambigusa@gmail.com</a></p>
+</body></html>"""
+
+
+# ---------------------------------------------------------------------------
 # Static file serving — serve the built React UI at /
 # Must be registered AFTER all API routes so /api/* is not intercepted.
 # ---------------------------------------------------------------------------
