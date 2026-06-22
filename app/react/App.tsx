@@ -1039,6 +1039,117 @@ interface ProviderInfo {
   key_preview?: string;
 }
 
+const TREZZHAUS_AUTH_API = "https://trezzhaus-os.onrender.com";
+const TREZZHAUS_TOKEN_KEY = "trezzhaus_session_token";
+
+export function getTrezzhausToken(): string | null {
+  return localStorage.getItem(TREZZHAUS_TOKEN_KEY);
+}
+
+function AccountSection() {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [loginError, setLoginError] = useState("");
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [session, setSession] = useState<{ loggedIn: boolean; isOwner: boolean; account: any } | null>(null);
+
+  const loadSession = async () => {
+    const token = getTrezzhausToken();
+    if (!token) { setSession({ loggedIn: false, isOwner: false, account: null }); return; }
+    try {
+      const res = await fetch(`${API}/auth/session`, { headers: { Authorization: `Bearer ${token}` } });
+      setSession(await res.json());
+    } catch {
+      setSession({ loggedIn: false, isOwner: false, account: null });
+    }
+  };
+
+  useEffect(() => { loadSession(); }, []);
+
+  const submit = async () => {
+    if (!username.trim() || !password) return;
+    setLoggingIn(true);
+    setLoginError("");
+    try {
+      const endpoint = mode === "register" ? "/api/auth/register" : "/api/auth/login";
+      const res = await fetch(`${TREZZHAUS_AUTH_API}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username.trim(), password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLoginError(data.error || (mode === "register" ? "Registration failed." : "Login failed."));
+        return;
+      }
+      localStorage.setItem(TREZZHAUS_TOKEN_KEY, data.token);
+      setPassword("");
+      await loadSession();
+    } catch {
+      setLoginError("Could not reach the TrezzHaus account service — check your connection.");
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
+  const logout = () => {
+    localStorage.removeItem(TREZZHAUS_TOKEN_KEY);
+    setSession({ loggedIn: false, isOwner: false, account: null });
+  };
+
+  if (session === null) return null;
+
+  return (
+    <div>
+      <div style={{ color: "#e2e8f0", fontSize: 16, fontWeight: 700, marginBottom: 4 }}>
+        🔑 TrezzHaus Account
+      </div>
+      {session.loggedIn ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+          <span style={{ color: "#94a3b8", fontSize: 13 }}>
+            Signed in as <strong style={{ color: "#e2e8f0" }}>{session.account?.username}</strong>
+          </span>
+          {session.isOwner && (
+            <span style={{ background: "#0ea5e9", color: "#fff", fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999 }}>
+              OWNER
+            </span>
+          )}
+          <button onClick={logout} style={{ ...pillStyle, cursor: "pointer" }}>Sign out</button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8, maxWidth: 320 }}>
+          <div style={{ color: "#64748b", fontSize: 12 }}>
+            {mode === "register" ? "Create your TrezzHaus account." : "Sign in with your TrezzHaus account to unlock owner-only LUMI behavior."}
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={() => { setMode("login"); setLoginError(""); }} style={{ ...pillStyle, cursor: "pointer", color: mode === "login" ? "#38bdf8" : "#64748b" }}>Sign in</button>
+            <button onClick={() => { setMode("register"); setLoginError(""); }} style={{ ...pillStyle, cursor: "pointer", color: mode === "register" ? "#38bdf8" : "#64748b" }}>Register</button>
+          </div>
+          <input
+            placeholder="Username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            style={inputStyle}
+          />
+          <input
+            placeholder="Password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+            style={inputStyle}
+          />
+          {loginError && <div style={{ color: "#f87171", fontSize: 12 }}>{loginError}</div>}
+          <button onClick={submit} disabled={loggingIn} style={{ ...pillStyle, cursor: "pointer", background: "#0ea5e9", color: "#fff" }}>
+            {loggingIn ? "Working…" : mode === "register" ? "Create account" : "Sign in"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsTab() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -1096,6 +1207,8 @@ function SettingsTab() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 720 }}>
+      <AccountSection />
+
       <div>
         <div style={{ color: "#e2e8f0", fontSize: 16, fontWeight: 700, marginBottom: 4 }}>
           ⚙ API Keys
@@ -1696,9 +1809,13 @@ function LumiTab() {
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setSending(true);
     try {
+      const token = getTrezzhausToken();
       const res = await fetch(`${API}/lumi/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           message: text,
           missionId: sessionId.current,

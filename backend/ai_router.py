@@ -29,6 +29,51 @@ from dataclasses import dataclass, field
 from typing import Any
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+
+# Owner-mode cascade: cap on how many of OpenRouter's live free-tier models
+# (200+) to try beyond the curated list, and a short per-call timeout so a
+# string of dead/overloaded free models can't make one chat request hang
+# for minutes. Bounded at _OWNER_CASCADE_MAX * _OWNER_CASCADE_TIMEOUT secs.
+_OWNER_CASCADE_MAX = 30
+_OWNER_CASCADE_TIMEOUT = 12
+
+_free_model_cache: dict[str, Any] = {"ids": [], "fetched_at": 0.0}
+_FREE_MODEL_CACHE_TTL = 3600
+
+
+def _fetch_free_openrouter_models(api_key: str) -> list[str]:
+    """Live list of every free (:free / $0-priced) model OpenRouter currently
+    offers — owner mode cascades through these instead of the small curated
+    free list, to actually use the "200+ free models" available."""
+    import time
+
+    now = time.time()
+    if _free_model_cache["ids"] and now - _free_model_cache["fetched_at"] < _FREE_MODEL_CACHE_TTL:
+        return _free_model_cache["ids"]
+
+    req = urllib.request.Request(
+        OPENROUTER_MODELS_URL,
+        headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        ids: list[str] = []
+        for m in data.get("data", []):
+            pricing = m.get("pricing", {})
+            try:
+                free = float(pricing.get("prompt", "1")) == 0.0 and float(pricing.get("completion", "1")) == 0.0
+            except (TypeError, ValueError):
+                continue
+            if free:
+                ids.append(m["id"])
+        if ids:
+            _free_model_cache["ids"] = ids
+            _free_model_cache["fetched_at"] = now
+        return ids
+    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError):
+        return _free_model_cache["ids"]
 
 # ---------------------------------------------------------------------------
 # Model cascade: free-tier first → low-cost → premium
@@ -135,6 +180,7 @@ class AIRouter:
         messages: list[dict[str, str]],
         temperature: float,
         max_tokens: int,
+        timeout: int | None = None,
     ) -> ChatResult:
         if not self.api_key:
             return ChatResult(model=model, content="", ok=False, error="OPENROUTER_API_KEY not set.")
@@ -158,7 +204,7 @@ class AIRouter:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 content = data["choices"][0]["message"]["content"]
                 usage = data.get("usage", {})
@@ -203,6 +249,49 @@ class AIRouter:
                     return result
 
         return ChatResult(model="none", content="", ok=False, error="All models in cascade exhausted.")
+
+    def owner_cascade(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.72,
+        max_tokens: int = 1200,
+    ) -> ChatResult:
+        """
+        Owner-only: cascades through OpenRouter's entire live free-tier model
+        catalog (200+, refreshed hourly) instead of the small curated free
+        list, before falling back to the regular low-cost/premium tiers.
+        Capped at _OWNER_CASCADE_MAX models with a short per-call timeout so
+        a run of dead free models can't make one request hang indefinitely.
+        """
+        tried: set[str] = set()
+
+        for model_info in _CASCADE:
+            if model_info["tier"] == "free":
+                tried.add(model_info["id"])
+                result = self._raw_call(model_info["id"], messages, temperature, max_tokens, timeout=_OWNER_CASCADE_TIMEOUT)
+                if result.ok:
+                    return result
+
+        live_free = _fetch_free_openrouter_models(self.api_key)
+        for model_id in live_free:
+            if model_id in tried:
+                continue
+            if len(tried) >= _OWNER_CASCADE_MAX:
+                break
+            tried.add(model_id)
+            result = self._raw_call(model_id, messages, temperature, max_tokens, timeout=_OWNER_CASCADE_TIMEOUT)
+            if result.ok:
+                return result
+
+        # Free tiers (curated + live) exhausted — fall back to low-cost/premium
+        for model_info in sorted(_CASCADE, key=lambda m: m["pri"]):
+            if model_info["id"] not in tried:
+                tried.add(model_info["id"])
+                result = self._raw_call(model_info["id"], messages, temperature, max_tokens)
+                if result.ok:
+                    return result
+
+        return ChatResult(model="none", content="", ok=False, error="Owner cascade exhausted (curated + live free + paid tiers).")
 
     # ------------------------------------------------------------------
     # Role-specific convenience methods
@@ -456,14 +545,16 @@ class AIRouter:
         use_ollama: bool = False,
         ollama_model: str | None = None,
         domain: str | None = None,
+        owner_mode: bool = False,
     ) -> ChatResult:
         """
         LUMI conversational interface — the studio AI assistant.
         Maintains conversation history for multi-turn sessions.
 
         Priority order:
-          1. Local Ollama (if use_ollama=True)
-          2. OpenRouter free-tier cascade (OPENROUTER_API_KEY)
+          1. Local Ollama (if use_ollama=True, or always for the verified owner)
+          2. OpenRouter cascade — the curated free/low-cost/premium list normally,
+             or owner_mode's full live free-tier catalog (200+ models) for the owner
           3. User-provided provider keys (openrouter → google → openai → anthropic)
           4. Helpful exhausted message with upgrade guidance
 
@@ -474,6 +565,10 @@ class AIRouter:
             ollama_model: Specific Ollama model (e.g. 'gemma3:27b').
             domain: Creative domain for prompt enhancement
                     ('video'|'music'|'game'|'code'|'creative').
+            owner_mode: True only for the verified app owner (SSO-checked in
+                main.py) — cascades through every free model OpenRouter
+                currently offers, not just the curated subset, and always
+                tries local Ollama first regardless of use_ollama.
         """
         from .lumi_prompt_enhancer import detect_domain, enhance_prompt  # noqa: PLC0415
 
@@ -486,8 +581,8 @@ class AIRouter:
             messages.extend(history[-20:])
         messages.append({"role": "user", "content": user_message})
 
-        # 1. Route to local Ollama when requested
-        if use_ollama:
+        # 1. Route to local Ollama when requested, or always for the owner
+        if use_ollama or owner_mode:
             from .ollama_provider import get_ollama  # noqa: PLC0415
             ollama = get_ollama()
             if ollama_model:
@@ -498,8 +593,9 @@ class AIRouter:
                 return ChatResult(model=result.model, content=result.content, ok=True, usage=result.usage)
             # Fall through to OpenRouter if Ollama fails
 
-        # 2. OpenRouter cascade (system key)
-        result = self.chat(messages, role="lumi", temperature=0.72, max_tokens=1200)
+        # 2. OpenRouter cascade — owner gets the full live free catalog
+        result = self.owner_cascade(messages, temperature=0.72, max_tokens=1200) if owner_mode else \
+            self.chat(messages, role="lumi", temperature=0.72, max_tokens=1200)
         if result.ok:
             return result
 

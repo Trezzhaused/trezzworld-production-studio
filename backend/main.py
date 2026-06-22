@@ -1,5 +1,5 @@
 from pathlib import Path
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -98,6 +98,20 @@ def pipeline_missions():
 # LUMI AI chat interface
 # ---------------------------------------------------------------------------
 
+@app.get("/api/auth/session")
+def auth_session(authorization: str | None = Header(default=None)):
+    """Validate the caller's TrezzHaus account session (SSO with trezzhaus.com) and report owner status."""
+    from .trezzhaus_auth import read_bearer_token, get_session, is_owner  # noqa: PLC0415
+
+    token = read_bearer_token(authorization)
+    account = get_session(token) if token else None
+    return {
+        "loggedIn": account is not None,
+        "isOwner": is_owner(account),
+        "account": {"id": account.get("id"), "username": account.get("username"), "role": account.get("role")} if account else None,
+    }
+
+
 class LumiChatRequest(BaseModel):
     message: str
     missionId: str | None = None
@@ -108,7 +122,7 @@ class LumiChatRequest(BaseModel):
 
 
 @app.post("/api/lumi/chat")
-def lumi_chat(payload: LumiChatRequest):
+def lumi_chat(payload: LumiChatRequest, authorization: str | None = Header(default=None)):
     """
     Chat with LUMI. Stores conversation in MissionStore and returns AI response.
     Supports OpenRouter cascade AND local Ollama (SuperGemma 26B / Gemma 27B).
@@ -158,12 +172,32 @@ def lumi_chat(payload: LumiChatRequest):
         else:
             image_note = "\n\n[No image-generation API key configured — add one in Settings to enable real image output.]"
 
+    # Owner mode: verified via SSO against the trezzhaus.com account system
+    # (trezzhaus_auth.py). Never grants LUMI any new execution ability — it
+    # only changes what she's allowed to say: for the verified owner, she may
+    # propose concrete infrastructure/capability changes (e.g. a Dockerfile
+    # diff) as a plan for a human to review and ship, instead of refusing or
+    # pretending she can do it herself.
+    owner_note = ""
+    from .trezzhaus_auth import read_bearer_token, get_session, is_owner  # noqa: PLC0415
+    owner_mode = is_owner(get_session(read_bearer_token(authorization)))
+    if owner_mode:
+        owner_note = (
+            "\n\n[SYSTEM: The speaker is verified, via TrezzHaus account SSO, as the "
+            "owner of this app. If they ask you to add a new capability or tool, you "
+            "may propose a concrete, specific plan (e.g. exact Dockerfile lines, exact "
+            "code) for a human engineer to review and apply — you cannot execute, "
+            "install, or deploy anything yourself, so always frame it as a plan to "
+            "hand off, never as something you've already done.]"
+        )
+
     result = router.lumi_chat(
-        payload.message + image_note,
+        payload.message + image_note + owner_note,
         history=history,
         use_ollama=payload.useOllama,
         ollama_model=payload.ollamaModel,
         domain=payload.domain,
+        owner_mode=owner_mode,
     )
 
     content = result.content if result.ok else result.content or f"LUMI is unavailable: {result.error}"
