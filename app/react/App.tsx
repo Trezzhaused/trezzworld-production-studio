@@ -2625,7 +2625,7 @@ export default function App() {
   useEffect(() => {
     const token = getTrezzhausToken();
     if (!token) { setSession({ loggedIn: false, isOwner: false, account: null }); return; }
-    fetch(`${API}/auth/session`, { headers: { Authorization: `******` } })
+    fetch(`${API}/auth/session`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json()).then(setSession).catch(() => setSession({ loggedIn: false, isOwner: false, account: null }));
   }, []);
 

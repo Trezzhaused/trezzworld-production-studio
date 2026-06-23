@@ -1266,7 +1266,7 @@ async def image_upload(file: UploadFile = File(...)):
     data = await file.read()
     if len(data) > 20 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large — maximum 20 MB.")
-    ext = "png" if "png" in ct else ("jpg" if "jpeg" in ct else "webp")
+    ext = "png" if "png" in ct else ("jpg" if "jpeg" in ct else ("gif" if "gif" in ct else "webp"))
     job_id = str(_uuid.uuid4())
     dest = _img_dir() / f"{job_id}.{ext}"
     dest.write_bytes(data)
@@ -1279,15 +1279,26 @@ async def image_upload(file: UploadFile = File(...)):
     }
 
 
+_UUID_RE = __import__("re").compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+
+
+def _validate_id(value: str, label: str = "id") -> str:
+    """Reject non-UUID strings to prevent path traversal attacks."""
+    if not _UUID_RE.match(value):
+        raise HTTPException(status_code=400, detail=f"Invalid {label} format.")
+    return value
+
+
 @app.get("/api/image/{image_id}/download")
 def image_download(image_id: str):
     """Download an image from the Image Studio (generated or uploaded)."""
+    _validate_id(image_id, "imageId")
     d = _img_dir()
-    for ext in ("png", "jpg", "webp"):
+    for ext in ("png", "jpg", "webp", "gif"):
         p = d / f"{image_id}.{ext}"
         if p.exists():
-            mt = "image/png" if ext == "png" else ("image/jpeg" if ext == "jpg" else "image/webp")
-            return FileResponse(path=str(p), media_type=mt, filename=f"studio-image-{image_id}.{ext}")
+            mt_map = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}
+            return FileResponse(path=str(p), media_type=mt_map[ext], filename=f"studio-image-{image_id}.{ext}")
     raise HTTPException(status_code=404, detail="Image not found.")
 
 
@@ -1302,9 +1313,13 @@ class ImageFilterRequest(BaseModel):
 @app.post("/api/image/filter")
 def image_filter(payload: ImageFilterRequest):
     """Apply a touchup filter to an existing Image Studio image (sharpen, blur, enhance, resize, grayscale)."""
+    _validate_id(payload.imageId, "imageId")
+    allowed_ops = {"sharpen", "blur", "enhance", "grayscale", "resize"}
+    if payload.operation not in allowed_ops:
+        raise HTTPException(status_code=400, detail=f"Unknown operation. Choose from: {sorted(allowed_ops)}")
     d = _img_dir()
     src_path = None
-    for ext in ("png", "jpg", "webp"):
+    for ext in ("png", "jpg", "webp", "gif"):
         p = d / f"{payload.imageId}.{ext}"
         if p.exists():
             src_path = p
@@ -1342,8 +1357,6 @@ def _voice_dir() -> _Path:
 class VoiceGenerateRequest(BaseModel):
     text: str
     voiceId: str = "en-US-female"
-    rate: str = "+0%"   # e.g. "+10%" faster, "-10%" slower
-    volume: str = "+0%" # e.g. "+20%"
 
 
 @app.post("/api/voice/generate")
@@ -1390,6 +1403,7 @@ def voice_catalogue():
 @app.get("/api/voice/{audio_id}/download")
 def voice_download(audio_id: str):
     """Download a generated voice file."""
+    _validate_id(audio_id, "audioId")
     p = _voice_dir() / f"{audio_id}.mp3"
     if not p.exists():
         raise HTTPException(status_code=404, detail="Audio file not found or expired.")
