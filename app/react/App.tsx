@@ -2615,7 +2615,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
 function getInitialTab(): Tab {
   const params = new URLSearchParams(window.location.search);
   const t = params.get("tab");
-  return (["control","video","image","music","voice","lumi","roblox","settings"] as Tab[]).includes(t as Tab) ? (t as Tab) : "control";
+  return TABS.some((tab) => tab.id === t) ? (t as Tab) : "control";
 }
 
 export default function App() {
@@ -2667,10 +2667,13 @@ export default function App() {
         </div>
 
         {/* Tab bar */}
-        <div style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+        <div role="tablist" style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
           {TABS.map((t) => (
             <button
               key={t.id}
+              role="tab"
+              aria-selected={tab === t.id}
+              aria-controls={`panel-${t.id}`}
               onClick={() => setTab(t.id)}
               style={{
                 padding: "6px 13px", borderRadius: 6, border: "none",

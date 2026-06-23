@@ -1,4 +1,8 @@
 from pathlib import Path
+import os
+import re
+import tempfile
+import uuid
 from fastapi import FastAPI, File, HTTPException, Header, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -1189,21 +1193,16 @@ def debug_roblox_test(universeId: str | None = None):
 # Image Studio — standalone AI image creation + upload + filter touchup
 # ---------------------------------------------------------------------------
 
-import uuid as _uuid
-import tempfile as _tempfile
-import os as _os
-from pathlib import Path as _Path
-
-_IMAGE_STUDIO_DIR = _Path(_os.environ.get("LUMI_EXPORT_DIR", "/tmp/trezzworld/exports/lumi"))
+_IMAGE_STUDIO_DIR = Path(os.environ.get("LUMI_EXPORT_DIR", "/tmp/trezzworld/exports/lumi"))
 
 
-def _img_dir() -> _Path:
+def _img_dir() -> Path:
     d = _IMAGE_STUDIO_DIR
     try:
         d.mkdir(parents=True, exist_ok=True)
         return d
     except OSError:
-        fb = _Path(_tempfile.gettempdir()) / "trezzworld" / "exports" / "lumi"
+        fb = Path(tempfile.gettempdir()) / "trezzworld" / "exports" / "lumi"
         fb.mkdir(parents=True, exist_ok=True)
         return fb
 
@@ -1237,7 +1236,7 @@ def image_create(payload: ImageCreateRequest):
 
     from .video_generator_patch import generate_scene_image_ai  # noqa: PLC0415
     export_dir = _img_dir()
-    job_id = str(_uuid.uuid4())
+    job_id = str(uuid.uuid4())
     target_path = export_dir / f"{job_id}.png"
     scene = {
         "title": payload.prompt[:60],
@@ -1266,8 +1265,9 @@ async def image_upload(file: UploadFile = File(...)):
     data = await file.read()
     if len(data) > 20 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large — maximum 20 MB.")
-    ext = "png" if "png" in ct else ("jpg" if "jpeg" in ct else ("gif" if "gif" in ct else "webp"))
-    job_id = str(_uuid.uuid4())
+    _CT_TO_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
+    ext = _CT_TO_EXT.get(ct, "webp")
+    job_id = str(uuid.uuid4())
     dest = _img_dir() / f"{job_id}.{ext}"
     dest.write_bytes(data)
     return {
@@ -1279,7 +1279,7 @@ async def image_upload(file: UploadFile = File(...)):
     }
 
 
-_UUID_RE = __import__("re").compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+_UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
 
 def _validate_id(value: str, label: str = "id") -> str:
@@ -1341,15 +1341,15 @@ def image_filter(payload: ImageFilterRequest):
 # Voice Studio — standalone text-to-speech generation + download
 # ---------------------------------------------------------------------------
 
-_VOICE_DIR = _Path(_os.environ.get("VOICE_EXPORT_DIR", "/tmp/trezzworld/exports/voice"))
+_VOICE_DIR = Path(os.environ.get("VOICE_EXPORT_DIR", "/tmp/trezzworld/exports/voice"))
 
 
-def _voice_dir() -> _Path:
+def _voice_dir() -> Path:
     try:
         _VOICE_DIR.mkdir(parents=True, exist_ok=True)
         return _VOICE_DIR
     except OSError:
-        fb = _Path(_tempfile.gettempdir()) / "trezzworld" / "exports" / "voice"
+        fb = Path(tempfile.gettempdir()) / "trezzworld" / "exports" / "voice"
         fb.mkdir(parents=True, exist_ok=True)
         return fb
 
@@ -1375,7 +1375,7 @@ def voice_generate(payload: VoiceGenerateRequest):
     if payload.voiceId not in VOICE_CATALOGUE:
         raise HTTPException(status_code=400, detail=f"Unknown voiceId '{payload.voiceId}'.")
 
-    audio_id = str(_uuid.uuid4())
+    audio_id = str(uuid.uuid4())
     out_path = _voice_dir() / f"{audio_id}.mp3"
     ok = synthesize_narration(text, payload.voiceId, out_path)
     if not ok:
