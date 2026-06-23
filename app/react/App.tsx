@@ -1917,13 +1917,696 @@ function LumiTab() {
   );
 }
 
+// ── Image Studio Tab ──────────────────────────────────────────────────────────
+
+const IMAGE_STYLES = [
+  { id: "cinematic", label: "🎬 Cinematic", desc: "Film-quality photorealistic" },
+  { id: "3d", label: "🎲 3D Render", desc: "Photorealistic 3D" },
+  { id: "anime", label: "✏ Anime", desc: "Anime & illustration style" },
+  { id: "surreal", label: "🌀 Surreal", desc: "Dreamlike fantasy art" },
+  { id: "logo", label: "🔤 Logo / Brand", desc: "Clean vector-style branding" },
+  { id: "poster", label: "🪧 Poster / Ad", desc: "Marketing & promotional art" },
+  { id: "portrait", label: "🧑 Portrait", desc: "Character / headshot" },
+  { id: "landscape", label: "🏔 Landscape", desc: "Scenic environment" },
+];
+
+const IMAGE_FILTERS = [
+  { id: "sharpen",   label: "✨ Sharpen",   icon: "✨" },
+  { id: "blur",      label: "💧 Blur",      icon: "💧" },
+  { id: "enhance",   label: "⚡ Enhance",   icon: "⚡" },
+  { id: "grayscale", label: "⬛ Grayscale", icon: "⬛" },
+  { id: "resize",    label: "📐 Resize",    icon: "📐" },
+];
+
+interface ImageResult {
+  imageId: string;
+  imageUrl: string;
+  prompt: string;
+  style: string;
+  source: "ai" | "vector" | "upload";
+  note?: string;
+}
+
+function ImageTab() {
+  const [prompt, setPrompt] = useState("");
+  const [style, setStyle] = useState("cinematic");
+  const [width, setWidth] = useState(1024);
+  const [height, setHeight] = useState(1024);
+  const [generating, setGenerating] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [filtering, setFiltering] = useState<string | null>(null);
+  const [resizeW, setResizeW] = useState(800);
+  const [resizeH, setResizeH] = useState(600);
+  const [images, setImages] = useState<ImageResult[]>([]);
+  const [selected, setSelected] = useState<ImageResult | null>(null);
+  const [error, setError] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const generate = async () => {
+    if (!prompt.trim()) return;
+    setGenerating(true);
+    setError("");
+    try {
+      const res = await fetch(`${API}/image/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, style, width, height }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Generation failed.");
+      const img: ImageResult = { imageId: data.imageId, imageUrl: data.imageUrl, prompt, style, source: data.source, note: data.note };
+      setImages((prev) => [img, ...prev]);
+      setSelected(img);
+      setPrompt("");
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const uploadFile = async (file: File) => {
+    setUploading(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${API}/image/upload`, { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Upload failed.");
+      const img: ImageResult = { imageId: data.imageId, imageUrl: data.imageUrl, prompt: file.name, style: "upload", source: "upload" };
+      setImages((prev) => [img, ...prev]);
+      setSelected(img);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const applyFilter = async (operation: string) => {
+    if (!selected) return;
+    setFiltering(operation);
+    setError("");
+    try {
+      const body: any = { imageId: selected.imageId, operation };
+      if (operation === "resize") { body.width = resizeW; body.height = resizeH; }
+      const res = await fetch(`${API}/image/filter`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Filter failed.");
+      const img: ImageResult = { imageId: data.imageId, imageUrl: data.imageUrl, prompt: `${selected.prompt} [${operation}]`, style: selected.style, source: selected.source };
+      setImages((prev) => [img, ...prev]);
+      setSelected(img);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setFiltering(null);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", gap: 16 }}>
+      {/* Left: create / upload panel */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, letterSpacing: 1 }}>🖼 IMAGE STUDIO</div>
+
+        {/* Style selector */}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {IMAGE_STYLES.map((s) => (
+            <button key={s.id} onClick={() => setStyle(s.id)} title={s.desc} style={{
+              ...pillStyle, cursor: "pointer",
+              background: style === s.id ? "#0f2438" : "#0a0f1a",
+              color: style === s.id ? "#38bdf8" : "#64748b",
+              border: `1px solid ${style === s.id ? "#38bdf8" : "#1e3a5f"}`,
+            }}>
+              {s.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Prompt box */}
+        <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 14 }}>
+          <textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey) generate(); }}
+            placeholder='Describe your image... (e.g., "A glowing neon city skyline at night, rain-soaked streets, cinematic")'
+            rows={4}
+            style={{ ...inputStyle, resize: "vertical", border: "none", background: "transparent", padding: "4px 2px", marginBottom: 10 }}
+          />
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <select value={`${width}x${height}`} onChange={(e) => {
+              const [w, h] = e.target.value.split("x").map(Number);
+              setWidth(w); setHeight(h);
+            }} style={pillStyle}>
+              <option value="512x512">512×512</option>
+              <option value="768x768">768×768</option>
+              <option value="1024x1024">1024×1024 (Square)</option>
+              <option value="1920x1080">1920×1080 (16:9)</option>
+              <option value="1080x1920">1080×1920 (Vertical)</option>
+              <option value="1200x628">1200×628 (Banner)</option>
+            </select>
+            <div style={{ flex: 1 }} />
+            <button
+              onClick={() => fileRef.current?.click()}
+              disabled={uploading}
+              style={{ ...btnStyle(!uploading), background: "#1e293b" }}
+            >
+              {uploading ? "⏳ Uploading..." : "⬆ Upload Image"}
+            </button>
+            <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }}
+              onChange={(e) => { if (e.target.files?.[0]) uploadFile(e.target.files[0]); }} />
+            <button
+              onClick={generate}
+              disabled={generating || !prompt.trim()}
+              style={{ ...btnStyle(!generating && !!prompt.trim()), padding: "10px 20px", fontWeight: 700 }}
+            >
+              {generating ? "⏳ Generating..." : "✨ Generate"}
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <div style={{ background: "#7f1d1d22", border: "1px solid #ef444444", borderRadius: 6, padding: "8px 12px", color: "#fca5a5", fontSize: 12 }}>
+            {error}
+          </div>
+        )}
+
+        {/* Touchup tools for selected image */}
+        {selected && (
+          <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 14 }}>
+            <div style={{ color: "#a855f7", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 10 }}>
+              ⚒ TOUCHUP TOOLS
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+              {IMAGE_FILTERS.filter((f) => f.id !== "resize").map((f) => (
+                <button key={f.id} onClick={() => applyFilter(f.id)} disabled={filtering !== null} style={btnStyle(filtering === null)}>
+                  {filtering === f.id ? "⏳..." : f.label}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span style={{ color: "#64748b", fontSize: 11 }}>📐 Resize to</span>
+              <input type="number" value={resizeW} min={64} max={4096}
+                onChange={(e) => setResizeW(parseInt(e.target.value) || 800)}
+                style={{ ...inputStyle, width: 70 }} />
+              <span style={{ color: "#475569", fontSize: 11 }}>×</span>
+              <input type="number" value={resizeH} min={64} max={4096}
+                onChange={(e) => setResizeH(parseInt(e.target.value) || 600)}
+                style={{ ...inputStyle, width: 70 }} />
+              <button onClick={() => applyFilter("resize")} disabled={filtering !== null} style={btnStyle(filtering === null)}>
+                {filtering === "resize" ? "⏳..." : "Apply"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Gallery thumbnails */}
+        {images.length > 0 && (
+          <div>
+            <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 8 }}>
+              GALLERY ({images.length})
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 8 }}>
+              {images.map((img) => (
+                <div
+                  key={img.imageId}
+                  onClick={() => setSelected(img)}
+                  style={{
+                    cursor: "pointer", borderRadius: 6, overflow: "hidden",
+                    border: `2px solid ${selected?.imageId === img.imageId ? "#38bdf8" : "#1e3a5f"}`,
+                    aspectRatio: "1", background: "#0a0f1a",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}
+                >
+                  <img src={img.imageUrl} alt={img.prompt} style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Right: preview panel */}
+      {selected && (
+        <div style={{ width: 420, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ background: "#000", borderRadius: 10, overflow: "hidden", aspectRatio: "1", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <img src={selected.imageUrl} alt={selected.prompt} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+          </div>
+          <div style={{ background: "#0a0f1a", borderRadius: 8, padding: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ color: "#e2e8f0", fontSize: 12, lineHeight: 1.4 }}>{selected.prompt}</div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ ...pillStyle, fontSize: 10 }}>{selected.style}</span>
+              <span style={{ ...pillStyle, fontSize: 10, color: selected.source === "ai" ? "#22c55e" : "#f59e0b" }}>
+                {selected.source === "ai" ? "✓ AI Generated" : selected.source === "vector" ? "⬡ Vector" : "⬆ Uploaded"}
+              </span>
+            </div>
+            {selected.note && (
+              <div style={{ color: "#f59e0b", fontSize: 11 }}>{selected.note}</div>
+            )}
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              <a href={selected.imageUrl} download={`studio-${selected.imageId}.png`}
+                style={{ ...btnStyle(true), textDecoration: "none", flex: 1, textAlign: "center" }}>
+                ⬇ Download
+              </a>
+              <button onClick={() => {
+                setPrompt(`Variation of: ${selected.prompt}`);
+                setStyle(selected.style);
+              }} style={{ ...btnStyle(true), flex: 1 }}>
+                🔀 Variation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Voice Studio Tab ──────────────────────────────────────────────────────────
+
+interface VoiceResult {
+  audioId: string;
+  audioUrl: string;
+  text: string;
+  voiceLabel: string;
+}
+
+function VoiceTab() {
+  const [text, setText] = useState("");
+  const [voiceId, setVoiceId] = useState("en-US-female");
+  const [voices, setVoices] = useState<{ id: string; label: string; gender: string; language: string }[]>([]);
+  const [generating, setGenerating] = useState(false);
+  const [results, setResults] = useState<VoiceResult[]>([]);
+  const [selected, setSelected] = useState<VoiceResult | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [error, setError] = useState("");
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  useEffect(() => {
+    fetch(`${API}/voice/catalogue`)
+      .then((r) => r.json())
+      .then((d) => setVoices(d.voices ?? []))
+      .catch(() => {
+        fetch(`${API}/video/voices`).then((r) => r.json()).then((d) => setVoices(d.voices ?? [])).catch(() => {});
+      });
+  }, []);
+
+  const generate = async () => {
+    if (!text.trim()) return;
+    setGenerating(true);
+    setError("");
+    try {
+      const res = await fetch(`${API}/voice/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, voiceId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Voice generation failed.");
+      const result: VoiceResult = { audioId: data.audioId, audioUrl: data.audioUrl, text, voiceLabel: data.voiceLabel };
+      setResults((prev) => [result, ...prev]);
+      setSelected(result);
+      setText("");
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (playing) { audioRef.current.pause(); setPlaying(false); }
+    else { audioRef.current.play(); setPlaying(true); }
+  };
+
+  const charLimit = 5000;
+  const chars = text.length;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 860 }}>
+      <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, letterSpacing: 1 }}>🎙 VOICE STUDIO</div>
+
+      {/* Voice selector */}
+      <div>
+        <div style={{ color: "#64748b", fontSize: 11, marginBottom: 8, fontWeight: 600, letterSpacing: 1 }}>SELECT VOICE</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 6 }}>
+          {voices.map((v) => (
+            <button key={v.id} onClick={() => setVoiceId(v.id)} style={{
+              textAlign: "left", padding: "8px 12px", borderRadius: 6,
+              cursor: "pointer", border: "none",
+              background: voiceId === v.id ? "#0f2438" : "#0a0f1a",
+              borderLeft: `3px solid ${voiceId === v.id ? "#38bdf8" : "#1e3a5f"}`,
+            }}>
+              <div style={{ color: voiceId === v.id ? "#e2e8f0" : "#94a3b8", fontSize: 12, fontWeight: voiceId === v.id ? 700 : 400 }}>
+                {v.gender === "female" ? "👩" : "👨"} {v.label}
+              </div>
+              <div style={{ color: "#475569", fontSize: 11 }}>{v.language}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Text input */}
+      <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+          <div style={{ color: "#64748b", fontSize: 11, fontWeight: 600, letterSpacing: 1 }}>SCRIPT / TEXT</div>
+          <div style={{ color: chars > charLimit * 0.9 ? "#ef4444" : "#475569", fontSize: 11 }}>{chars.toLocaleString()} / {charLimit.toLocaleString()}</div>
+        </div>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value.slice(0, charLimit))}
+          placeholder="Type or paste your script here... LUMI can write it for you in the LUMI tab."
+          rows={8}
+          style={{ ...inputStyle, resize: "vertical", border: "none", background: "transparent", padding: "4px 2px", marginBottom: 10 }}
+        />
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button
+            onClick={generate}
+            disabled={generating || !text.trim()}
+            style={{ ...btnStyle(!generating && !!text.trim()), padding: "10px 24px", fontWeight: 700 }}
+          >
+            {generating ? "⏳ Synthesizing..." : "🎙 Generate Voice"}
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div style={{ background: "#7f1d1d22", border: "1px solid #ef444444", borderRadius: 6, padding: "8px 12px", color: "#fca5a5", fontSize: 12 }}>
+          {error}
+        </div>
+      )}
+
+      {/* Player for selected result */}
+      {selected && (
+        <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 16 }}>
+          <div style={{ color: "#94a3b8", fontSize: 12, fontWeight: 700, letterSpacing: 1, marginBottom: 10 }}>
+            NOW PLAYING — {selected.voiceLabel}
+          </div>
+
+          <audio ref={audioRef} src={selected.audioUrl} onEnded={() => setPlaying(false)} />
+
+          {/* Waveform visual */}
+          <div style={{
+            background: "#000d1a", borderRadius: 6, height: 48, marginBottom: 12,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 1, overflow: "hidden",
+          }}>
+            {Array.from({ length: 80 }).map((_, i) => {
+              const h = playing ? Math.abs(Math.sin(i * 0.35)) * 36 + 4 : 4 + (i % 5) * 4;
+              return (
+                <div key={i} style={{
+                  width: 2, height: h, borderRadius: 2,
+                  background: playing ? "#a855f7" : "#1e3a5f",
+                  transition: "height 0.1s ease",
+                }} />
+              );
+            })}
+          </div>
+
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button onClick={togglePlay} style={btnStyle(true)}>
+              {playing ? "⏸ Pause" : "▶ Play"}
+            </button>
+            <a href={selected.audioUrl} download={`voice-${selected.audioId}.mp3`}
+              style={{ ...btnStyle(true), textDecoration: "none" }}>
+              ⬇ Download MP3
+            </a>
+          </div>
+
+          <div style={{ marginTop: 10, color: "#475569", fontSize: 12, lineHeight: 1.5 }}>
+            {selected.text.slice(0, 200)}{selected.text.length > 200 ? "..." : ""}
+          </div>
+        </div>
+      )}
+
+      {/* History list */}
+      {results.length > 1 && (
+        <div>
+          <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 8 }}>HISTORY</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {results.map((r) => (
+              <div key={r.audioId} onClick={() => setSelected(r)} style={{
+                background: selected?.audioId === r.audioId ? "#0f2438" : "#0a0f1a",
+                border: `1px solid ${selected?.audioId === r.audioId ? "#38bdf8" : "#1e3a5f"}`,
+                borderRadius: 6, padding: "10px 14px", cursor: "pointer",
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+              }}>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: 12, fontWeight: 600 }}>
+                    {r.text.slice(0, 60)}{r.text.length > 60 ? "..." : ""}
+                  </div>
+                  <div style={{ color: "#475569", fontSize: 11 }}>{r.voiceLabel}</div>
+                </div>
+                <a href={r.audioUrl} download onClick={(e) => e.stopPropagation()}
+                  style={{ ...btnStyle(true), textDecoration: "none", fontSize: 11 }}>
+                  ⬇
+                </a>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Control Panel Tab ──────────────────────────────────────────────────────────
+
+const MODULE_DEFS = [
+  { id: "video",    icon: "🎬", label: "Video Studio",     desc: "AI video generation, cinematic rendering, editing, trim, export", color: "#38bdf8" },
+  { id: "image",    icon: "🖼",  label: "Image Studio",    desc: "AI image creation, upload, GIMP touchup filters, download", color: "#a78bfa" },
+  { id: "music",    icon: "🎵", label: "Music Composer",   desc: "Text-to-music via MusicGen, AudioGen, Riffusion. BPM, stems, download", color: "#34d399" },
+  { id: "voice",    icon: "🎙", label: "Voice Studio",     desc: "Text-to-speech narration in 14 voices. No API key needed", color: "#f472b6" },
+  { id: "lumi",     icon: "🤖", label: "LUMI AI",          desc: "Unlimited AI chat, image gen, vector art, code, creative direction", color: "#fbbf24" },
+  { id: "roblox",   icon: "🎮", label: "Roblox Creator",   desc: "AI-designed Luau games, monetization, publish to Roblox", color: "#f97316" },
+  { id: "settings", icon: "⚙",  label: "Settings & Keys",  desc: "API keys for AI providers, TrezzHaus account SSO, image key test", color: "#64748b" },
+];
+
+function ControlTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
+  const [cpData, setCpData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [missionPrompt, setMissionPrompt] = useState("");
+  const [booting, setBooting] = useState(false);
+  const [bootResult, setBootResult] = useState<any>(null);
+  const [toolsStatus, setToolsStatus] = useState<any>(null);
+
+  useEffect(() => {
+    Promise.all([
+      fetch(`${API}/studio/control-plane`).then((r) => r.json()).catch(() => null),
+      fetch(`${API}/lumi/tools/status`).then((r) => r.json()).catch(() => null),
+    ]).then(([cp, tools]) => {
+      setCpData(cp);
+      setToolsStatus(tools);
+      setLoading(false);
+    });
+  }, []);
+
+  const bootMission = async () => {
+    if (!missionPrompt.trim()) return;
+    setBooting(true);
+    try {
+      const res = await fetch(`${API}/studio/control-plane/boot`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: missionPrompt }),
+      });
+      setBootResult(await res.json());
+    } catch {
+      setBootResult({ error: "Could not connect to backend." });
+    } finally {
+      setBooting(false);
+    }
+  };
+
+  const readiness = cpData?.productionReadiness ?? 0;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Hero banner */}
+      <div style={{
+        background: "linear-gradient(135deg, #0a0f1a 0%, #0f172a 50%, #0a0f1a 100%)",
+        border: "1px solid #1e3a5f", borderRadius: 16, padding: 28,
+      }}>
+        <div style={{ fontSize: 24, fontWeight: 900, letterSpacing: -0.5, marginBottom: 6 }}>
+          <span style={{ color: "#38bdf8" }}>TrezzWorld</span>{" "}
+          <span style={{ color: "#e2e8f0" }}>Production Studio</span>
+        </div>
+        <div style={{ color: "#64748b", fontSize: 14, marginBottom: 16, maxWidth: 640 }}>
+          Your AAA+ AI creative studio — video, image, music, voice, games, and unlimited LUMI AI.
+          Everything you need to create, edit, upload, download, and launch.
+        </div>
+
+        {/* Readiness meter */}
+        <div style={{ maxWidth: 400, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", color: "#64748b", fontSize: 11, marginBottom: 4 }}>
+            <span>Studio Readiness</span>
+            <span style={{ color: readiness >= 80 ? "#22c55e" : readiness >= 50 ? "#f59e0b" : "#ef4444", fontWeight: 700 }}>
+              {readiness}%
+            </span>
+          </div>
+          <ProgressBar value={readiness} color={readiness >= 80 ? "#22c55e" : readiness >= 50 ? "#f59e0b" : "#38bdf8"} />
+        </div>
+
+        {/* Mission launcher */}
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            type="text"
+            value={missionPrompt}
+            onChange={(e) => setMissionPrompt(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") bootMission(); }}
+            placeholder={cpData?.missionPromptPlaceholder ?? "Describe your creative mission..."}
+            style={{ ...inputStyle, flex: 1, fontSize: 13 }}
+          />
+          <button onClick={bootMission} disabled={booting || !missionPrompt.trim()}
+            style={{ ...btnStyle(!booting && !!missionPrompt.trim()), padding: "10px 20px", fontWeight: 700 }}>
+            {booting ? "⏳ Launching..." : "🚀 Launch Mission"}
+          </button>
+        </div>
+        {bootResult && (
+          <div style={{ marginTop: 10, background: "#0f2438", borderRadius: 8, padding: "10px 14px", color: "#94a3b8", fontSize: 12 }}>
+            <div style={{ color: "#38bdf8", fontWeight: 700, marginBottom: 4 }}>
+              ✓ Mission {bootResult.missionId} launched
+            </div>
+            {bootResult.summary}
+          </div>
+        )}
+      </div>
+
+      {/* Module grid */}
+      <div>
+        <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 12 }}>STUDIO MODULES</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 10 }}>
+          {MODULE_DEFS.map((mod) => (
+            <div
+              key={mod.id}
+              onClick={() => onNavigate(mod.id as Tab)}
+              style={{
+                background: "#0a0f1a",
+                border: `1px solid ${mod.color}33`,
+                borderRadius: 10, padding: 16, cursor: "pointer",
+                transition: "border-color 0.2s",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.borderColor = mod.color + "88")}
+              onMouseLeave={(e) => (e.currentTarget.style.borderColor = mod.color + "33")}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                <span style={{ fontSize: 22 }}>{mod.icon}</span>
+                <span style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 700 }}>{mod.label}</span>
+              </div>
+              <div style={{ color: "#64748b", fontSize: 12, lineHeight: 1.5 }}>{mod.desc}</div>
+              <div style={{ marginTop: 10 }}>
+                <span style={{ color: mod.color, fontSize: 11, fontWeight: 600 }}>Open →</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Capability providers from control plane */}
+      {cpData?.capabilityProviders && (
+        <div>
+          <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 10 }}>
+            CAPABILITY PROVIDERS
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 6 }}>
+            {cpData.capabilityProviders.map((p: any) => (
+              <div key={p.capability} style={{
+                background: "#0a0f1a",
+                border: `1px solid ${p.status === "ready" ? "#22c55e33" : p.status === "standby" ? "#f59e0b33" : "#1e3a5f"}`,
+                borderRadius: 8, padding: "10px 14px",
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                  <span style={{ color: "#94a3b8", fontSize: 12, fontWeight: 600 }}>{p.capability}</span>
+                  <span style={{
+                    fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 8,
+                    background: p.status === "ready" ? "#22c55e22" : p.status === "standby" ? "#f59e0b22" : "#1e3a5f",
+                    color: p.status === "ready" ? "#22c55e" : p.status === "standby" ? "#f59e0b" : "#475569",
+                  }}>
+                    {p.status}
+                  </span>
+                </div>
+                <div style={{ color: "#475569", fontSize: 11 }}>{p.providerId}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Creative tools status */}
+      {toolsStatus && (
+        <div>
+          <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 10 }}>
+            CREATIVE TOOLS
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {Object.entries(toolsStatus).filter(([k]) => k !== "summary").map(([key, val]: [string, any]) => {
+              const available = val === true || val?.available === true;
+              return (
+                <div key={key} style={{
+                  background: "#0a0f1a",
+                  border: `1px solid ${available ? "#22c55e33" : "#1e3a5f"}`,
+                  borderRadius: 8, padding: "8px 14px",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}>
+                  <span style={{ color: available ? "#22c55e" : "#475569", fontSize: 11 }}>
+                    {available ? "✓" : "✗"}
+                  </span>
+                  <span style={{ color: available ? "#94a3b8" : "#475569", fontSize: 12 }}>
+                    {key}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Execution queue */}
+      {cpData?.executionQueue && cpData.executionQueue.length > 0 && (
+        <div>
+          <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 10 }}>
+            META-BUILDER QUEUE
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {cpData.executionQueue.map((job: any) => (
+              <div key={job.jobId} style={{
+                background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 6, padding: "10px 14px",
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+              }}>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: 12, fontWeight: 600 }}>{job.name}</div>
+                  <div style={{ color: "#475569", fontSize: 11 }}>{job.workerId} · {job.stage}</div>
+                </div>
+                <StatusBadge status={job.status} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {loading && (
+        <div style={{ color: "#475569", fontSize: 12, textAlign: "center" }}>Loading studio status...</div>
+      )}
+    </div>
+  );
+}
+
 // ── App shell ─────────────────────────────────────────────────────────────────
 
-type Tab = "video" | "music" | "lumi" | "roblox" | "settings";
+type Tab = "control" | "video" | "image" | "music" | "voice" | "lumi" | "roblox" | "settings";
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
+  { id: "control",  label: "Control",  icon: "🎛" },
   { id: "video",    label: "Video",    icon: "🎬" },
+  { id: "image",    label: "Image",    icon: "🖼" },
   { id: "music",    label: "Music",    icon: "🎵" },
+  { id: "voice",    label: "Voice",    icon: "🎙" },
   { id: "lumi",     label: "LUMI",     icon: "🤖" },
   { id: "roblox",   label: "Roblox",   icon: "🎮" },
   { id: "settings", label: "Settings", icon: "⚙" },
@@ -1932,11 +2615,19 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
 function getInitialTab(): Tab {
   const params = new URLSearchParams(window.location.search);
   const t = params.get("tab");
-  return (t === "video" || t === "music" || t === "lumi" || t === "roblox" || t === "settings") ? t : "video";
+  return (["control","video","image","music","voice","lumi","roblox","settings"] as Tab[]).includes(t as Tab) ? (t as Tab) : "control";
 }
 
 export default function App() {
   const [tab, setTab] = useState<Tab>(getInitialTab());
+  const [session, setSession] = useState<{ loggedIn: boolean; isOwner: boolean; account: any } | null>(null);
+
+  useEffect(() => {
+    const token = getTrezzhausToken();
+    if (!token) { setSession({ loggedIn: false, isOwner: false, account: null }); return; }
+    fetch(`${API}/auth/session`, { headers: { Authorization: `******` } })
+      .then((r) => r.json()).then(setSession).catch(() => setSession({ loggedIn: false, isOwner: false, account: null }));
+  }, []);
 
   return (
     <div style={{
@@ -1950,7 +2641,7 @@ export default function App() {
       {/* Header */}
       <div style={{
         borderBottom: "1px solid #0f172a",
-        padding: "12px 24px",
+        padding: "10px 24px",
         display: "flex", alignItems: "center", justifyContent: "space-between",
         background: "#020817cc", backdropFilter: "blur(8px)",
         position: "sticky", top: 0, zIndex: 100,
@@ -1963,17 +2654,27 @@ export default function App() {
               Production Studio
             </span>
           </div>
+          {session?.loggedIn && (
+            <span style={{
+              background: session.isOwner ? "#0ea5e922" : "#1e293b",
+              border: `1px solid ${session.isOwner ? "#0ea5e9" : "#334155"}`,
+              color: session.isOwner ? "#38bdf8" : "#94a3b8",
+              fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
+            }}>
+              {session.isOwner ? "👑 OWNER" : `@${session.account?.username}`}
+            </span>
+          )}
         </div>
 
         {/* Tab bar */}
-        <div style={{ display: "flex", gap: 4 }}>
+        <div style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
           {TABS.map((t) => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
               style={{
-                padding: "6px 16px", borderRadius: 6, border: "none",
-                cursor: "pointer", fontSize: 12, fontWeight: 600,
+                padding: "6px 13px", borderRadius: 6, border: "none",
+                cursor: "pointer", fontSize: 11, fontWeight: 600,
                 background: tab === t.id ? "#0ea5e9" : "transparent",
                 color: tab === t.id ? "#fff" : "#64748b",
                 transition: "all 0.2s",
@@ -1986,11 +2687,14 @@ export default function App() {
       </div>
 
       {/* Main content */}
-      <div style={{ flex: 1, padding: 24, maxWidth: 1200, width: "100%", margin: "0 auto" }}>
-        {tab === "video" && <VideoTab />}
-        {tab === "music" && <MusicTab />}
-        {tab === "lumi" && <LumiTab />}
-        {tab === "roblox" && <RobloxTab />}
+      <div style={{ flex: 1, padding: 24, maxWidth: 1280, width: "100%", margin: "0 auto" }}>
+        {tab === "control"  && <ControlTab onNavigate={setTab} />}
+        {tab === "video"    && <VideoTab />}
+        {tab === "image"    && <ImageTab />}
+        {tab === "music"    && <MusicTab />}
+        {tab === "voice"    && <VoiceTab />}
+        {tab === "lumi"     && <LumiTab />}
+        {tab === "roblox"   && <RobloxTab />}
         {tab === "settings" && <SettingsTab />}
       </div>
     </div>

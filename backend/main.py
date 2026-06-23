@@ -1,5 +1,5 @@
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, File, HTTPException, Header, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -13,7 +13,7 @@ app = FastAPI(title=f"{APP_NAME} API", version=VERSION)
 app.add_middleware(
     CORSMiddleware,
  allow_origins=["*"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -1183,6 +1183,217 @@ def debug_roblox_test(universeId: str | None = None):
         "universeId": resolved_universe_id,
         "gamePassCount": len(result.get("gamePasses", [])) if isinstance(result, dict) else None,
     }
+
+
+# ---------------------------------------------------------------------------
+# Image Studio — standalone AI image creation + upload + filter touchup
+# ---------------------------------------------------------------------------
+
+import uuid as _uuid
+import tempfile as _tempfile
+import os as _os
+from pathlib import Path as _Path
+
+_IMAGE_STUDIO_DIR = _Path(_os.environ.get("LUMI_EXPORT_DIR", "/tmp/trezzworld/exports/lumi"))
+
+
+def _img_dir() -> _Path:
+    d = _IMAGE_STUDIO_DIR
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+    except OSError:
+        fb = _Path(_tempfile.gettempdir()) / "trezzworld" / "exports" / "lumi"
+        fb.mkdir(parents=True, exist_ok=True)
+        return fb
+
+
+class ImageCreateRequest(BaseModel):
+    prompt: str
+    style: str = "cinematic"
+    width: int = 1024
+    height: int = 1024
+
+
+@app.post("/api/image/create")
+def image_create(payload: ImageCreateRequest):
+    """Generate an AI image from a text prompt (uses the same pipeline as Video Studio frames)."""
+    from .lumi_image_export import has_image_credentials, generate_lumi_image  # noqa: PLC0415
+
+    if not has_image_credentials():
+        # Fallback: render an SVG-based placeholder if no credentials
+        from .lumi_creative_tools import generate_vector_svg, save_output  # noqa: PLC0415
+        png, svg_text, error = generate_vector_svg(payload.prompt, payload.width, payload.height)
+        if png is not None:
+            job_id = save_output(png, "png")
+            return {
+                "ok": True,
+                "imageId": job_id,
+                "imageUrl": f"/api/lumi/tools/export/{job_id}.png",
+                "source": "vector",
+                "note": "Rendered as vector art — add an AI image key in Settings for photorealistic output.",
+            }
+        raise HTTPException(status_code=502, detail="No image-generation API key configured and vector fallback failed.")
+
+    from .video_generator_patch import generate_scene_image_ai  # noqa: PLC0415
+    export_dir = _img_dir()
+    job_id = str(_uuid.uuid4())
+    target_path = export_dir / f"{job_id}.png"
+    scene = {
+        "title": payload.prompt[:60],
+        "visual_description": payload.prompt,
+        "camera_motion": "static shot",
+        "color_grade": payload.style,
+    }
+    ok, reason = generate_scene_image_ai(scene, "ImageStudio", payload.style, (payload.width, payload.height), target_path)
+    if not ok:
+        raise HTTPException(status_code=502, detail=f"Image generation failed: {reason}")
+    return {
+        "ok": True,
+        "imageId": job_id,
+        "imageUrl": f"/api/image/{job_id}/download",
+        "source": "ai",
+    }
+
+
+@app.post("/api/image/upload")
+async def image_upload(file: UploadFile = File(...)):
+    """Upload an existing image file for editing/touchup in the Image Studio."""
+    allowed = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+    ct = file.content_type or ""
+    if ct not in allowed:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type '{ct}'. Use PNG, JPEG, WebP, or GIF.")
+    data = await file.read()
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large — maximum 20 MB.")
+    ext = "png" if "png" in ct else ("jpg" if "jpeg" in ct else "webp")
+    job_id = str(_uuid.uuid4())
+    dest = _img_dir() / f"{job_id}.{ext}"
+    dest.write_bytes(data)
+    return {
+        "ok": True,
+        "imageId": job_id,
+        "imageUrl": f"/api/image/{job_id}/download",
+        "filename": file.filename,
+        "sizeBytes": len(data),
+    }
+
+
+@app.get("/api/image/{image_id}/download")
+def image_download(image_id: str):
+    """Download an image from the Image Studio (generated or uploaded)."""
+    d = _img_dir()
+    for ext in ("png", "jpg", "webp"):
+        p = d / f"{image_id}.{ext}"
+        if p.exists():
+            mt = "image/png" if ext == "png" else ("image/jpeg" if ext == "jpg" else "image/webp")
+            return FileResponse(path=str(p), media_type=mt, filename=f"studio-image-{image_id}.{ext}")
+    raise HTTPException(status_code=404, detail="Image not found.")
+
+
+class ImageFilterRequest(BaseModel):
+    imageId: str
+    operation: str  # sharpen, blur, enhance, grayscale, resize
+    width: int | None = None
+    height: int | None = None
+    amount: int | None = None
+
+
+@app.post("/api/image/filter")
+def image_filter(payload: ImageFilterRequest):
+    """Apply a touchup filter to an existing Image Studio image (sharpen, blur, enhance, resize, grayscale)."""
+    d = _img_dir()
+    src_path = None
+    for ext in ("png", "jpg", "webp"):
+        p = d / f"{payload.imageId}.{ext}"
+        if p.exists():
+            src_path = p
+            break
+    if src_path is None:
+        raise HTTPException(status_code=404, detail="Source image not found.")
+
+    from .lumi_creative_tools import apply_image_filter, save_output, CreativeToolError  # noqa: PLC0415
+    params = {k: v for k, v in {"width": payload.width, "height": payload.height, "amount": payload.amount}.items() if v is not None}
+    try:
+        result = apply_image_filter(src_path.read_bytes(), payload.operation, **params)
+    except CreativeToolError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    job_id = save_output(result, "png")
+    return {"ok": True, "imageId": job_id, "imageUrl": f"/api/lumi/tools/export/{job_id}.png"}
+
+
+# ---------------------------------------------------------------------------
+# Voice Studio — standalone text-to-speech generation + download
+# ---------------------------------------------------------------------------
+
+_VOICE_DIR = _Path(_os.environ.get("VOICE_EXPORT_DIR", "/tmp/trezzworld/exports/voice"))
+
+
+def _voice_dir() -> _Path:
+    try:
+        _VOICE_DIR.mkdir(parents=True, exist_ok=True)
+        return _VOICE_DIR
+    except OSError:
+        fb = _Path(_tempfile.gettempdir()) / "trezzworld" / "exports" / "voice"
+        fb.mkdir(parents=True, exist_ok=True)
+        return fb
+
+
+class VoiceGenerateRequest(BaseModel):
+    text: str
+    voiceId: str = "en-US-female"
+    rate: str = "+0%"   # e.g. "+10%" faster, "-10%" slower
+    volume: str = "+0%" # e.g. "+20%"
+
+
+@app.post("/api/voice/generate")
+def voice_generate(payload: VoiceGenerateRequest):
+    """
+    Generate a text-to-speech audio file using edge-tts (free, no API key needed).
+    Returns an audioId to download the MP3/WAV.
+    """
+    from .narration_engine import VOICE_CATALOGUE, synthesize_narration  # noqa: PLC0415
+
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text must not be empty.")
+    if len(text) > 5000:
+        raise HTTPException(status_code=400, detail="text too long — max 5000 characters.")
+    if payload.voiceId not in VOICE_CATALOGUE:
+        raise HTTPException(status_code=400, detail=f"Unknown voiceId '{payload.voiceId}'.")
+
+    audio_id = str(_uuid.uuid4())
+    out_path = _voice_dir() / f"{audio_id}.mp3"
+    ok = synthesize_narration(text, payload.voiceId, out_path)
+    if not ok:
+        raise HTTPException(
+            status_code=502,
+            detail="Voice synthesis failed — edge-tts may not be installed or network is unreachable.",
+        )
+    return {
+        "ok": True,
+        "audioId": audio_id,
+        "audioUrl": f"/api/voice/{audio_id}/download",
+        "voiceId": payload.voiceId,
+        "voiceLabel": VOICE_CATALOGUE[payload.voiceId]["label"],
+        "characters": len(text),
+    }
+
+
+@app.get("/api/voice/catalogue")
+def voice_catalogue():
+    """Return all available TTS voices."""
+    from .narration_engine import get_narrator_voices  # noqa: PLC0415
+    return {"voices": get_narrator_voices()}
+
+
+@app.get("/api/voice/{audio_id}/download")
+def voice_download(audio_id: str):
+    """Download a generated voice file."""
+    p = _voice_dir() / f"{audio_id}.mp3"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Audio file not found or expired.")
+    return FileResponse(path=str(p), media_type="audio/mpeg", filename=f"voice-{audio_id}.mp3")
 
 
 # ---------------------------------------------------------------------------
