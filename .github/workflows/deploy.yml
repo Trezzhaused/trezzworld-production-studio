@@ -25,6 +25,7 @@ jobs:
       - name: Validate Railway secrets
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
         run: |
@@ -32,6 +33,12 @@ jobs:
             echo "::error::RAILWAY_TOKEN secret is not configured."
             echo "::error::Add it at: Settings → Secrets and variables → Actions → New repository secret"
             echo "::error::Name: RAILWAY_TOKEN  Value: your Railway project token (railway.com → Project → Settings → Tokens)"
+            exit 1
+          fi
+          if [ -z "$RAILWAY_PROJECT_ID" ]; then
+            echo "::error::RAILWAY_PROJECT_ID secret is not configured."
+            echo "::error::Add it at: Settings → Secrets and variables → Actions → New repository secret"
+            echo "::error::Name: RAILWAY_PROJECT_ID  Value: your Railway project ID (railway.com → Project → Settings → General → Project ID)"
             exit 1
           fi
           TARGET_SERVICE="${RAILWAY_SERVICE_ID:-$RAILWAY_SERVICE}"
@@ -51,6 +58,7 @@ jobs:
       - name: Deploy via Railway
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
           RAILWAY_ENVIRONMENT: ${{ vars.RAILWAY_ENVIRONMENT }}
         run: |
