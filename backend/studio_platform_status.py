@@ -7,7 +7,7 @@ from .trezzhaus_auth import AUTH_API_BASE
 
 
 def _bool_env(name: str) -> bool:
-    return bool(os.environ.get(name, "").strip())
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def build_studio_platform_status() -> dict[str, Any]:

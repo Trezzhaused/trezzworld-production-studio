@@ -1359,13 +1359,6 @@ const srOnlyStyle: React.CSSProperties = {
   border: 0,
 };
 
-function activateOnKeyDown(event: React.KeyboardEvent<HTMLElement>, action: () => void) {
-  if (event.key === "Enter" || event.key === " ") {
-    event.preventDefault();
-    action();
-  }
-}
-
 // ── Roblox Tab ────────────────────────────────────────────────────────────────
 
 interface RobloxJob {
@@ -1748,16 +1741,17 @@ function RobloxTab() {
           <div style={{ color: "#64748b", fontSize: 11, marginBottom: 8, fontWeight: 600, letterSpacing: 1 }}>JOBS</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {jobs.map((job) => (
-              <div
+              <button
                 key={job.jobId}
+                type="button"
                 onClick={() => setSelectedJob(job)}
-                onKeyDown={(e) => activateOnKeyDown(e, () => setSelectedJob(job))}
-                role="button"
-                tabIndex={0}
                 style={{
                   background: selectedJob?.jobId === job.jobId ? "#0f2438" : "#0a0f1a",
                   border: `1px solid ${selectedJob?.jobId === job.jobId ? "#38bdf8" : "#1e3a5f"}`,
                   borderRadius: 6, padding: "10px 14px", cursor: "pointer",
+                  textAlign: "left",
+                  width: "100%",
+                  fontFamily: "inherit",
                 }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
@@ -1768,7 +1762,7 @@ function RobloxTab() {
                 </div>
                 <ProgressBar value={job.progress} color="#a855f7" />
                 <div style={{ color: "#475569", fontSize: 11, marginTop: 4 }}>{job.message}</div>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -2074,7 +2068,7 @@ function ImageTab() {
         {/* Style selector */}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {IMAGE_STYLES.map((s) => (
-            <button key={s.id} onClick={() => setStyle(s.id)} title={s.desc} style={{
+            <button key={s.id} onClick={() => setStyle(s.id)} title={s.desc} aria-label={s.desc} style={{
               ...pillStyle, cursor: "pointer",
               background: style === s.id ? "#0f2438" : "#0a0f1a",
               color: style === s.id ? "#38bdf8" : "#64748b",
@@ -2580,17 +2574,17 @@ function ControlTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
         <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 12 }}>STUDIO MODULES</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 10 }}>
           {MODULE_DEFS.map((mod) => (
-            <div
+            <button
               key={mod.id}
+              type="button"
               onClick={() => onNavigate(mod.id as Tab)}
-              onKeyDown={(e) => activateOnKeyDown(e, () => onNavigate(mod.id as Tab))}
-              role="button"
-              tabIndex={0}
               style={{
                 background: "#0a0f1a",
                 border: `1px solid ${mod.color}33`,
                 borderRadius: 10, padding: 16, cursor: "pointer",
                 transition: "border-color 0.2s",
+                textAlign: "left",
+                fontFamily: "inherit",
               }}
               onMouseEnter={(e) => (e.currentTarget.style.borderColor = mod.color + "88")}
               onMouseLeave={(e) => (e.currentTarget.style.borderColor = mod.color + "33")}
@@ -2603,7 +2597,7 @@ function ControlTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
               <div style={{ marginTop: 10 }}>
                 <span style={{ color: mod.color, fontSize: 11, fontWeight: 600 }}>Open →</span>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       </div>
@@ -2721,14 +2715,20 @@ function getInitialTab(): Tab {
 export default function App() {
   const [tab, setTab] = useState<Tab>(getInitialTab());
   const [session, setSession] = useState<{ loggedIn: boolean; isOwner: boolean; account: any } | null>(null);
+  const focusTab = (nextTab: Tab) => {
+    setTab(nextTab);
+    requestAnimationFrame(() => {
+      document.getElementById(`tab-${nextTab}`)?.focus();
+    });
+  };
   const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
-    if (event.key === "Home") return setTab(TABS[0].id);
-    if (event.key === "End") return setTab(TABS[TABS.length - 1].id);
+    if (event.key === "Home") return focusTab(TABS[0].id);
+    if (event.key === "End") return focusTab(TABS[TABS.length - 1].id);
     const delta = event.key === "ArrowRight" ? 1 : -1;
     const nextIndex = (index + delta + TABS.length) % TABS.length;
-    setTab(TABS[nextIndex].id);
+    focusTab(TABS[nextIndex].id);
   };
 
   useEffect(() => {
