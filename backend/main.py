@@ -11,6 +11,7 @@ from .config import APP_NAME, VERSION
 from .meta_builder import build_meta_builder_status, continue_meta_builder
 from .meta_development import build_meta_development_status
 from .studio_control_plane import boot_studio_mission, build_studio_control_plane
+from .studio_platform_status import build_studio_platform_status
 
 app = FastAPI(title=f"{APP_NAME} API", version=VERSION)
 
@@ -66,6 +67,11 @@ def meta_builder_continue(payload: MetaBuilderContinueRequest):
 @app.get("/api/studio/control-plane")
 def studio_control_plane():
     return build_studio_control_plane()
+
+
+@app.get("/api/studio/platform-status")
+def studio_platform_status():
+    return build_studio_platform_status()
 
 
 class StudioMissionRequest(BaseModel):

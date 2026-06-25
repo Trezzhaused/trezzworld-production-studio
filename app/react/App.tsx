@@ -1347,6 +1347,25 @@ const pillStyle: React.CSSProperties = {
   width: "auto",
 };
 
+const srOnlyStyle: React.CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: "hidden",
+  clip: "rect(0, 0, 0, 0)",
+  whiteSpace: "nowrap",
+  border: 0,
+};
+
+function activateOnKeyDown(event: React.KeyboardEvent<HTMLElement>, action: () => void) {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    action();
+  }
+}
+
 // ── Roblox Tab ────────────────────────────────────────────────────────────────
 
 interface RobloxJob {
@@ -1562,7 +1581,24 @@ function RobloxTab() {
   const [selectedJob, setSelectedJob] = useState<RobloxJob | null>(null);
   const [oauthStatus, setOauthStatus] = useState<{ connected: boolean; user?: any }>({ connected: false });
   const [lookingUpUniverse, setLookingUpUniverse] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const refreshJobs = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/roblox/games`);
+      const data = await res.json();
+      const nextJobs: RobloxJob[] = data.jobs ?? [];
+      setJobs(nextJobs);
+      setSelectedJob((current) => {
+        if (!nextJobs.length) return null;
+        if (!current) return nextJobs[0];
+        return nextJobs.find((job) => job.jobId === current.jobId) ?? nextJobs[0];
+      });
+    } catch {
+      // Leave current UI state intact if the refresh fails.
+    }
+  }, []);
 
   const lookupUniverseFromPlace = async (rawPlaceId: string) => {
     if (!rawPlaceId.trim() || universeId.trim()) return; // don't override a manually-entered universe ID
@@ -1584,13 +1620,14 @@ function RobloxTab() {
   };
 
   useEffect(() => {
+    refreshJobs();
     loadOauthStatus();
     const params = new URLSearchParams(window.location.search);
     if (params.get("robloxAuth")) {
       loadOauthStatus();
       window.history.replaceState({}, "", window.location.pathname);
     }
-  }, []);
+  }, [refreshJobs]);
 
   const signOut = async () => {
     await fetch(`${API}/roblox/oauth/logout`, { method: "POST" });
@@ -1600,6 +1637,7 @@ function RobloxTab() {
   const createJob = async () => {
     if (!concept.trim() || !universeId.trim() || !placeId.trim()) return;
     setCreating(true);
+    setStatusMessage("");
     try {
       const res = await fetch(`${API}/roblox/game/create`, {
         method: "POST",
@@ -1607,35 +1645,22 @@ function RobloxTab() {
         body: JSON.stringify({ concept, genre, maxPlayers, monetization, universeId, placeId }),
       });
       const job: RobloxJob = await res.json();
+      if (!res.ok) throw new Error((job as any).detail || "Failed to create Roblox job.");
       setJobs((prev) => [job, ...prev]);
       setSelectedJob(job);
       setConcept("");
+      setStatusMessage(`Queued Roblox job ${job.jobId}.`);
     } catch (err) {
-      console.error("Failed to create Roblox job:", err);
+      setStatusMessage(err instanceof Error ? err.message : "Failed to create Roblox job.");
     } finally {
       setCreating(false);
     }
   };
 
   useEffect(() => {
-    pollRef.current = setInterval(async () => {
-      const active = jobs.filter((j) => !["done", "error"].includes(j.status));
-      if (!active.length) return;
-      const updated = await Promise.all(
-        active.map(async (j) => {
-          try {
-            const res = await fetch(`${API}/roblox/game/${j.jobId}/status`);
-            return (await res.json()) as RobloxJob;
-          } catch {
-            return j;
-          }
-        })
-      );
-      setJobs((prev) => prev.map((j) => updated.find((u) => u.jobId === j.jobId) ?? j));
-      setSelectedJob((sel) => (sel ? (updated.find((u) => u.jobId === sel.jobId) ?? sel) : sel));
-    }, 3000);
+    pollRef.current = setInterval(() => { refreshJobs(); }, 3000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [jobs]);
+  }, [refreshJobs]);
 
   const canCreate = concept.trim() && universeId.trim() && placeId.trim() && !creating;
 
@@ -1663,16 +1688,17 @@ function RobloxTab() {
         <textarea
           value={concept}
           onChange={(e) => setConcept(e.target.value)}
+          aria-label="Roblox game concept"
           placeholder='Describe your game... (e.g., "A tycoon where players build and manage a pizza shop")'
           rows={3}
           style={{ ...inputStyle, resize: "vertical", border: "none", background: "transparent", padding: "4px 2px", marginBottom: 10 }}
         />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
-          <select value={genre} onChange={(e) => setGenre(e.target.value)} style={pillStyle}>
+          <select value={genre} onChange={(e) => setGenre(e.target.value)} aria-label="Roblox game genre" style={pillStyle}>
             {ROBLOX_GENRES.map((g) => <option key={g} value={g}>{g}</option>)}
           </select>
-          <input type="number" value={maxPlayers} min={2} max={100} onChange={(e) => setMaxPlayers(parseInt(e.target.value) || 20)} title="Max players" style={{ ...pillStyle, width: 70 }} />
-          <select value={monetization} onChange={(e) => setMonetization(e.target.value)} style={pillStyle}>
+          <input type="number" value={maxPlayers} min={2} max={100} onChange={(e) => setMaxPlayers(parseInt(e.target.value) || 20)} aria-label="Maximum players" title="Max players" style={{ ...pillStyle, width: 70 }} />
+          <select value={monetization} onChange={(e) => setMonetization(e.target.value)} aria-label="Roblox monetization strategy" style={pillStyle}>
             {ROBLOX_MONETIZATION.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         </div>
@@ -1683,6 +1709,7 @@ function RobloxTab() {
             value={placeId}
             onChange={(e) => setPlaceId(e.target.value)}
             onBlur={(e) => lookupUniverseFromPlace(e.target.value)}
+            aria-label="Roblox place ID or game URL"
             style={{ ...inputStyle, width: 260 }}
           />
           <input
@@ -1690,6 +1717,7 @@ function RobloxTab() {
             placeholder={lookingUpUniverse ? "Looking up..." : "Universe ID (auto-fills if found)"}
             value={universeId}
             onChange={(e) => setUniverseId(e.target.value)}
+            aria-label="Roblox universe ID"
             style={{ ...inputStyle, width: 220 }}
           />
           <div style={{ flex: 1 }} />
@@ -1697,6 +1725,11 @@ function RobloxTab() {
             {creating ? "⏳ Creating..." : "🎮 Generate Game"}
           </button>
         </div>
+        {statusMessage && (
+          <div aria-live="polite" style={{ color: statusMessage.startsWith("Queued") ? "#86efac" : "#fca5a5", fontSize: 12, marginTop: 8 }}>
+            {statusMessage}
+          </div>
+        )}
         {(!universeId.trim() || !placeId.trim()) && (
           <div style={{ color: "#64748b", fontSize: 11, marginTop: 8 }}>
             Don't have these yet? Create an empty Experience at{" "}
@@ -1718,6 +1751,9 @@ function RobloxTab() {
               <div
                 key={job.jobId}
                 onClick={() => setSelectedJob(job)}
+                onKeyDown={(e) => activateOnKeyDown(e, () => setSelectedJob(job))}
+                role="button"
+                tabIndex={0}
                 style={{
                   background: selectedJob?.jobId === job.jobId ? "#0f2438" : "#0a0f1a",
                   border: `1px solid ${selectedJob?.jobId === job.jobId ? "#38bdf8" : "#1e3a5f"}`,
@@ -1837,7 +1873,7 @@ function LumiTab() {
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 140px)", gap: 10 }}>
       {/* AI choice bar */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <select value={domain} onChange={(e) => setDomain(e.target.value)} style={pillStyle} title="Conversation domain">
+        <select value={domain} onChange={(e) => setDomain(e.target.value)} aria-label="LUMI conversation domain" style={pillStyle} title="Conversation domain">
           {DOMAINS.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
         </select>
 
@@ -1850,7 +1886,7 @@ function LumiTab() {
         </button>
 
         {useOllama && (
-          <select value={ollamaModel} onChange={(e) => setOllamaModel(e.target.value)} style={pillStyle}>
+          <select value={ollamaModel} onChange={(e) => setOllamaModel(e.target.value)} aria-label="Ollama model" style={pillStyle}>
             <option value="">Auto (SuperGemma)</option>
             {ollamaModels.filter((m) => m.available).map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
           </select>
@@ -1864,7 +1900,7 @@ function LumiTab() {
       </div>
 
       {/* Messages */}
-      <div ref={scrollRef} style={{
+      <div ref={scrollRef} aria-live="polite" style={{
         flex: 1, overflowY: "auto", background: "#0a0f1a", border: "1px solid #1e3a5f",
         borderRadius: 10, padding: 16, display: "flex", flexDirection: "column", gap: 12,
       }}>
@@ -1905,6 +1941,7 @@ function LumiTab() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+          aria-label="Message LUMI"
           placeholder="Message LUMI... (Enter to send, Shift+Enter for new line)"
           rows={2}
           style={{ ...inputStyle, flex: 1, resize: "vertical" }}
@@ -2390,6 +2427,7 @@ const MODULE_DEFS = [
 
 function ControlTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
   const [cpData, setCpData] = useState<any>(null);
+  const [platformStatus, setPlatformStatus] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [missionPrompt, setMissionPrompt] = useState("");
   const [booting, setBooting] = useState(false);
@@ -2399,9 +2437,11 @@ function ControlTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
   useEffect(() => {
     Promise.all([
       fetch(`${API}/studio/control-plane`).then((r) => r.json()).catch(() => null),
+      fetch(`${API}/studio/platform-status`).then((r) => r.json()).catch(() => null),
       fetch(`${API}/lumi/tools/status`).then((r) => r.json()).catch(() => null),
-    ]).then(([cp, tools]) => {
+    ]).then(([cp, platform, tools]) => {
       setCpData(cp);
+      setPlatformStatus(platform);
       setToolsStatus(tools);
       setLoading(false);
     });
@@ -2460,6 +2500,7 @@ function ControlTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
             value={missionPrompt}
             onChange={(e) => setMissionPrompt(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") bootMission(); }}
+            aria-label="Mission prompt"
             placeholder={cpData?.missionPromptPlaceholder ?? "Describe your creative mission..."}
             style={{ ...inputStyle, flex: 1, fontSize: 13 }}
           />
@@ -2478,6 +2519,62 @@ function ControlTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
         )}
       </div>
 
+      {platformStatus && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 10 }}>
+          <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 16 }}>
+            <div style={{ color: "#38bdf8", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 8 }}>
+              ACCESSIBILITY
+            </div>
+            <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.6, marginBottom: 10 }}>
+              {platformStatus.accessibility?.summary}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {(platformStatus.accessibility?.checks ?? []).map((check: any) => (
+                <div key={check.id} style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                  <span style={{ color: "#cbd5e1", fontSize: 12 }}>{check.label}</span>
+                  <span style={{ color: check.status === "active" ? "#22c55e" : "#f59e0b", fontSize: 11, fontWeight: 700 }}>
+                    {check.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 16 }}>
+            <div style={{ color: "#a78bfa", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 8 }}>
+              INTEGRATIONS
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {(platformStatus.integrations?.services ?? []).map((service: any) => (
+                <div key={service.id} style={{ borderBottom: "1px solid #0f172a", paddingBottom: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                    <span style={{ color: "#cbd5e1", fontSize: 12, fontWeight: 600 }}>{service.label}</span>
+                    <span style={{ color: service.status === "ready" ? "#22c55e" : service.status === "partial" ? "#f59e0b" : "#ef4444", fontSize: 11, fontWeight: 700 }}>
+                      {service.status}
+                    </span>
+                  </div>
+                  <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{service.detail}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 16 }}>
+            <div style={{ color: "#fbbf24", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 8 }}>
+              SAFETY
+            </div>
+            <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.6, marginBottom: 10 }}>
+              {platformStatus.safety?.summary}
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, color: "#cbd5e1", fontSize: 12, lineHeight: 1.6 }}>
+              {(platformStatus.safety?.guidelines ?? []).map((item: string) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+
       {/* Module grid */}
       <div>
         <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 12 }}>STUDIO MODULES</div>
@@ -2486,6 +2583,9 @@ function ControlTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
             <div
               key={mod.id}
               onClick={() => onNavigate(mod.id as Tab)}
+              onKeyDown={(e) => activateOnKeyDown(e, () => onNavigate(mod.id as Tab))}
+              role="button"
+              tabIndex={0}
               style={{
                 background: "#0a0f1a",
                 border: `1px solid ${mod.color}33`,
@@ -2621,6 +2721,15 @@ function getInitialTab(): Tab {
 export default function App() {
   const [tab, setTab] = useState<Tab>(getInitialTab());
   const [session, setSession] = useState<{ loggedIn: boolean; isOwner: boolean; account: any } | null>(null);
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === "Home") return setTab(TABS[0].id);
+    if (event.key === "End") return setTab(TABS[TABS.length - 1].id);
+    const delta = event.key === "ArrowRight" ? 1 : -1;
+    const nextIndex = (index + delta + TABS.length) % TABS.length;
+    setTab(TABS[nextIndex].id);
+  };
 
   useEffect(() => {
     const token = getTrezzhausToken();
@@ -2638,8 +2747,11 @@ export default function App() {
       display: "flex",
       flexDirection: "column",
     }}>
+      <a href="#main-content" style={{ ...srOnlyStyle, top: 8, left: 8 }}>
+        Skip to main content
+      </a>
       {/* Header */}
-      <div style={{
+      <header style={{
         borderBottom: "1px solid #0f172a",
         padding: "10px 24px",
         display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -2667,14 +2779,18 @@ export default function App() {
         </div>
 
         {/* Tab bar */}
-        <div role="tablist" style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
-          {TABS.map((t) => (
+        <nav aria-label="Studio sections">
+          <div role="tablist" aria-label="Studio sections" style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+            {TABS.map((t, index) => (
             <button
               key={t.id}
+              id={`tab-${t.id}`}
               role="tab"
               aria-selected={tab === t.id}
               aria-controls={`panel-${t.id}`}
+              tabIndex={tab === t.id ? 0 : -1}
               onClick={() => setTab(t.id)}
+              onKeyDown={(e) => onTabKeyDown(e, index)}
               style={{
                 padding: "6px 13px", borderRadius: 6, border: "none",
                 cursor: "pointer", fontSize: 11, fontWeight: 600,
@@ -2685,21 +2801,38 @@ export default function App() {
             >
               {t.icon} {t.label}
             </button>
-          ))}
-        </div>
-      </div>
+            ))}
+          </div>
+        </nav>
+      </header>
 
       {/* Main content */}
-      <div style={{ flex: 1, padding: 24, maxWidth: 1280, width: "100%", margin: "0 auto" }}>
-        {tab === "control"  && <ControlTab onNavigate={setTab} />}
-        {tab === "video"    && <VideoTab />}
-        {tab === "image"    && <ImageTab />}
-        {tab === "music"    && <MusicTab />}
-        {tab === "voice"    && <VoiceTab />}
-        {tab === "lumi"     && <LumiTab />}
-        {tab === "roblox"   && <RobloxTab />}
-        {tab === "settings" && <SettingsTab />}
-      </div>
+      <main id="main-content" style={{ flex: 1, padding: 24, maxWidth: 1280, width: "100%", margin: "0 auto" }}>
+        <section id="panel-control" role="tabpanel" aria-labelledby="tab-control" hidden={tab !== "control"}>
+          {tab === "control" && <ControlTab onNavigate={setTab} />}
+        </section>
+        <section id="panel-video" role="tabpanel" aria-labelledby="tab-video" hidden={tab !== "video"}>
+          {tab === "video" && <VideoTab />}
+        </section>
+        <section id="panel-image" role="tabpanel" aria-labelledby="tab-image" hidden={tab !== "image"}>
+          {tab === "image" && <ImageTab />}
+        </section>
+        <section id="panel-music" role="tabpanel" aria-labelledby="tab-music" hidden={tab !== "music"}>
+          {tab === "music" && <MusicTab />}
+        </section>
+        <section id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" hidden={tab !== "voice"}>
+          {tab === "voice" && <VoiceTab />}
+        </section>
+        <section id="panel-lumi" role="tabpanel" aria-labelledby="tab-lumi" hidden={tab !== "lumi"}>
+          {tab === "lumi" && <LumiTab />}
+        </section>
+        <section id="panel-roblox" role="tabpanel" aria-labelledby="tab-roblox" hidden={tab !== "roblox"}>
+          {tab === "roblox" && <RobloxTab />}
+        </section>
+        <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden={tab !== "settings"}>
+          {tab === "settings" && <SettingsTab />}
+        </section>
+      </main>
     </div>
   );
 }
