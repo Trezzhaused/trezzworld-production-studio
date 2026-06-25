@@ -1714,17 +1714,16 @@ function RobloxTab() {
         <textarea
           value={concept}
           onChange={(e) => setConcept(e.target.value)}
-          aria-label="Roblox game concept"
           placeholder='Describe your game... (e.g., "A tycoon where players build and manage a pizza shop")'
           rows={3}
           style={{ ...inputStyle, resize: "vertical", border: "none", background: "transparent", padding: "4px 2px", marginBottom: 10 }}
         />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
-          <select value={genre} onChange={(e) => setGenre(e.target.value)} aria-label="Roblox game genre" style={pillStyle}>
+          <select value={genre} onChange={(e) => setGenre(e.target.value)} style={pillStyle}>
             {ROBLOX_GENRES.map((g) => <option key={g} value={g}>{g}</option>)}
           </select>
           <input type="number" value={maxPlayers} min={2} max={100} onChange={(e) => setMaxPlayers(parseInt(e.target.value) || 20)} aria-label="Maximum players" title="Max players" style={{ ...pillStyle, width: 70 }} />
-          <select value={monetization} onChange={(e) => setMonetization(e.target.value)} aria-label="Roblox monetization strategy" style={pillStyle}>
+          <select value={monetization} onChange={(e) => setMonetization(e.target.value)} style={pillStyle}>
             {ROBLOX_MONETIZATION.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         </div>
@@ -1778,6 +1777,7 @@ function RobloxTab() {
                 key={job.jobId}
                 type="button"
                 onClick={() => setSelectedJob(job)}
+                aria-label={`Select Roblox job ${job.concept}`}
                 style={{
                   background: selectedJob?.jobId === job.jobId ? "#0f2438" : "#0a0f1a",
                   border: `1px solid ${selectedJob?.jobId === job.jobId ? "#38bdf8" : "#1e3a5f"}`,
@@ -1966,7 +1966,7 @@ function LumiTab() {
       </div>
 
       {/* Messages */}
-      <div ref={scrollRef} aria-live="polite" style={{
+      <div ref={scrollRef} style={{
         flex: 1, overflowY: "auto", background: "#0a0f1a", border: "1px solid #1e3a5f",
         borderRadius: 10, padding: 16, display: "flex", flexDirection: "column", gap: 12,
       }}>
@@ -2141,7 +2141,7 @@ function ImageTab({ onOpenLumi }: { onOpenLumi: (payload: LumiDraftPayload) => v
         {/* Style selector */}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {IMAGE_STYLES.map((s) => (
-            <button key={s.id} onClick={() => setStyle(s.id)} aria-label={s.desc} style={{
+            <button key={s.id} onClick={() => setStyle(s.id)} title={s.desc} style={{
               ...pillStyle, cursor: "pointer",
               background: style === s.id ? "#0f2438" : "#0a0f1a",
               color: style === s.id ? "#38bdf8" : "#64748b",
@@ -3048,7 +3048,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
 function getInitialTab(): Tab {
   const params = new URLSearchParams(window.location.search);
   const t = params.get("tab");
-  return TABS.some((tab) => tab.id === t) ? (t as Tab) : "control";
+  return TABS.find((tab) => tab.id === t)?.id ?? "control";
 }
 
 export default function App() {

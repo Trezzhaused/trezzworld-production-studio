@@ -1289,7 +1289,7 @@ async def image_upload(file: UploadFile = File(...)):
     }
 
 
-_UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+_UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
 
 
 def _validate_id(value: str, label: str = "id") -> str:
@@ -1299,13 +1299,21 @@ def _validate_id(value: str, label: str = "id") -> str:
     return value
 
 
+def _safe_export_path(base_dir: Path, resource_id: str, ext: str, label: str) -> Path:
+    safe_id = _validate_id(resource_id, label)
+    root = base_dir.resolve()
+    candidate = (root / f"{safe_id}.{ext}").resolve()
+    if candidate.parent != root:
+        raise HTTPException(status_code=400, detail=f"Invalid {label} path.")
+    return candidate
+
+
 @app.get("/api/image/{image_id}/download")
 def image_download(image_id: str):
     """Download an image from the Image Studio (generated or uploaded)."""
-    _validate_id(image_id, "imageId")
     d = _img_dir()
     for ext in ("png", "jpg", "webp", "gif"):
-        p = d / f"{image_id}.{ext}"
+        p = _safe_export_path(d, image_id, ext, "imageId")
         if p.exists():
             mt_map = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}
             return FileResponse(path=str(p), media_type=mt_map[ext], filename=f"studio-image-{image_id}.{ext}")
@@ -1323,14 +1331,13 @@ class ImageFilterRequest(BaseModel):
 @app.post("/api/image/filter")
 def image_filter(payload: ImageFilterRequest):
     """Apply a touchup filter to an existing Image Studio image (sharpen, blur, enhance, resize, grayscale)."""
-    _validate_id(payload.imageId, "imageId")
     allowed_ops = {"sharpen", "blur", "enhance", "grayscale", "resize"}
     if payload.operation not in allowed_ops:
         raise HTTPException(status_code=400, detail=f"Unknown operation. Choose from: {sorted(allowed_ops)}")
     d = _img_dir()
     src_path = None
     for ext in ("png", "jpg", "webp", "gif"):
-        p = d / f"{payload.imageId}.{ext}"
+        p = _safe_export_path(d, payload.imageId, ext, "imageId")
         if p.exists():
             src_path = p
             break
@@ -1381,21 +1388,21 @@ def _document_dir() -> Path:
 
 
 def _document_path(document_id: str) -> tuple[Path, str] | tuple[None, None]:
-    _validate_id(document_id, "documentId")
     doc_dir = _document_dir()
     for fmt in _DOCUMENT_FORMATS:
-        candidate = doc_dir / f"{document_id}.{fmt}"
+        candidate = _safe_export_path(doc_dir, document_id, fmt, "documentId")
         if candidate.exists():
             return candidate, fmt
     return None, None
 
 
 def _safe_document_title(title: str, fallback: str = "document") -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9._ -]+", "", (title or "").strip()).strip(" .")
+    cleaned = re.sub(r'[<>:"/\\|?*]+', "", (title or "").strip()).strip(" .")
     return cleaned[:80] or fallback
 
 
 def _write_document(document_id: str, fmt: str, content: str) -> Path:
+    safe_id = _validate_id(document_id, "documentId")
     if fmt not in _DOCUMENT_FORMATS:
         raise HTTPException(status_code=400, detail=f"Unsupported document format '{fmt}'.")
     encoded = content.encode("utf-8")
@@ -1403,10 +1410,10 @@ def _write_document(document_id: str, fmt: str, content: str) -> Path:
         raise HTTPException(status_code=413, detail="Document too large — maximum 5 MB.")
     doc_dir = _document_dir()
     for existing_fmt in _DOCUMENT_FORMATS:
-        existing = doc_dir / f"{document_id}.{existing_fmt}"
+        existing = _safe_export_path(doc_dir, safe_id, existing_fmt, "documentId")
         if existing.exists() and existing_fmt != fmt:
             existing.unlink()
-    path = doc_dir / f"{document_id}.{fmt}"
+    path = _safe_export_path(doc_dir, safe_id, fmt, "documentId")
     path.write_text(content, encoding="utf-8")
     return path
 
@@ -1486,7 +1493,6 @@ class DocumentUpdateRequest(BaseModel):
 
 @app.post("/api/document/{document_id}/update")
 def document_update(document_id: str, payload: DocumentUpdateRequest):
-    _validate_id(document_id, "documentId")
     path, existing_fmt = _document_path(document_id)
     if path is None or existing_fmt is None:
         raise HTTPException(status_code=404, detail="Document not found.")
