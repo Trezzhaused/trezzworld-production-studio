@@ -1990,6 +1990,7 @@ function ImageTab() {
   const [resizeH, setResizeH] = useState(600);
   const [images, setImages] = useState<ImageResult[]>([]);
   const [selected, setSelected] = useState<ImageResult | null>(null);
+  const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -2068,7 +2069,7 @@ function ImageTab() {
         {/* Style selector */}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {IMAGE_STYLES.map((s) => (
-            <button key={s.id} onClick={() => setStyle(s.id)} title={s.desc} aria-label={s.desc} style={{
+            <button key={s.id} onClick={() => setStyle(s.id)} aria-label={s.desc} style={{
               ...pillStyle, cursor: "pointer",
               background: style === s.id ? "#0f2438" : "#0a0f1a",
               color: style === s.id ? "#38bdf8" : "#64748b",
@@ -2164,19 +2165,25 @@ function ImageTab() {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 8 }}>
               {images.map((img) => (
-                <div
+                <button
                   key={img.imageId}
+                  type="button"
                   onClick={() => setSelected(img)}
                   style={{
                     cursor: "pointer", borderRadius: 6, overflow: "hidden",
                     border: `2px solid ${selected?.imageId === img.imageId ? "#38bdf8" : "#1e3a5f"}`,
                     aspectRatio: "1", background: "#0a0f1a",
                     display: "flex", alignItems: "center", justifyContent: "center",
+                    width: "100%",
                   }}
                 >
-                  <img src={img.imageUrl} alt={img.prompt} style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                </div>
+                  {failedImages[img.imageId] ? (
+                    <span style={{ color: "#64748b", fontSize: 12, padding: 10 }}>Preview unavailable</span>
+                  ) : (
+                    <img src={img.imageUrl} alt={img.prompt} style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      onError={() => setFailedImages((prev) => ({ ...prev, [img.imageId]: true }))} />
+                  )}
+                </button>
               ))}
             </div>
           </div>
@@ -2382,19 +2389,24 @@ function VoiceTab() {
           <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 8 }}>HISTORY</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {results.map((r) => (
-              <div key={r.audioId} onClick={() => setSelected(r)} style={{
+              <div key={r.audioId} style={{
                 background: selected?.audioId === r.audioId ? "#0f2438" : "#0a0f1a",
                 border: `1px solid ${selected?.audioId === r.audioId ? "#38bdf8" : "#1e3a5f"}`,
                 borderRadius: 6, padding: "10px 14px", cursor: "pointer",
                 display: "flex", justifyContent: "space-between", alignItems: "center",
+                width: "100%",
               }}>
-                <div>
+                <button
+                  type="button"
+                  onClick={() => setSelected(r)}
+                  style={{ background: "transparent", border: "none", padding: 0, flex: 1, textAlign: "left", fontFamily: "inherit", cursor: "pointer" }}
+                >
                   <div style={{ color: "#94a3b8", fontSize: 12, fontWeight: 600 }}>
                     {r.text.slice(0, 60)}{r.text.length > 60 ? "..." : ""}
                   </div>
                   <div style={{ color: "#475569", fontSize: 11 }}>{r.voiceLabel}</div>
-                </div>
-                <a href={r.audioUrl} download onClick={(e) => e.stopPropagation()}
+                </button>
+                <a href={r.audioUrl} download
                   style={{ ...btnStyle(true), textDecoration: "none", fontSize: 11 }}>
                   ⬇
                 </a>
@@ -2715,6 +2727,7 @@ function getInitialTab(): Tab {
 export default function App() {
   const [tab, setTab] = useState<Tab>(getInitialTab());
   const [session, setSession] = useState<{ loggedIn: boolean; isOwner: boolean; account: any } | null>(null);
+  const [skipLinkVisible, setSkipLinkVisible] = useState(false);
   const focusTab = (nextTab: Tab) => {
     setTab(nextTab);
     requestAnimationFrame(() => {
@@ -2747,7 +2760,26 @@ export default function App() {
       display: "flex",
       flexDirection: "column",
     }}>
-      <a href="#main-content" style={{ ...srOnlyStyle, top: 8, left: 8 }}>
+      <a
+        href="#main-content"
+        onFocus={() => setSkipLinkVisible(true)}
+        onBlur={() => setSkipLinkVisible(false)}
+        style={skipLinkVisible
+          ? {
+              position: "absolute",
+              top: 8,
+              left: 8,
+              zIndex: 200,
+              background: "#0ea5e9",
+              color: "#fff",
+              padding: "8px 12px",
+              borderRadius: 6,
+              textDecoration: "none",
+              fontSize: 12,
+              fontWeight: 700,
+            }
+          : { ...srOnlyStyle, top: 8, left: 8 }}
+      >
         Skip to main content
       </a>
       {/* Header */}

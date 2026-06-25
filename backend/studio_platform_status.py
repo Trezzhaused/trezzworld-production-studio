@@ -6,20 +6,20 @@ from typing import Any
 from .trezzhaus_auth import AUTH_API_BASE
 
 
-def _bool_env(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+def _has_value(name: str) -> bool:
+    return bool(os.environ.get(name, "").strip())
 
 
 def build_studio_platform_status() -> dict[str, Any]:
     roblox_oauth_configured = all(
-        _bool_env(name)
+        _has_value(name)
         for name in (
             "ROBLOX_OAUTH_CLIENT_ID",
             "ROBLOX_OAUTH_CLIENT_SECRET",
             "ROBLOX_OAUTH_REDIRECT_URI",
         )
     )
-    roblox_publish_configured = _bool_env("ROBLOX_API_KEY")
+    roblox_publish_configured = _has_value("ROBLOX_API_KEY")
 
     return {
         "accessibility": {
@@ -53,14 +53,14 @@ def build_studio_platform_status() -> dict[str, Any]:
                 {
                     "id": "lumi-openrouter",
                     "label": "LUMI / OpenRouter cascade",
-                    "status": "ready" if _bool_env("OPENROUTER_API_KEY") else "needs-config",
-                    "detail": "OPENROUTER_API_KEY configured" if _bool_env("OPENROUTER_API_KEY") else "Set OPENROUTER_API_KEY",
+                    "status": "ready" if _has_value("OPENROUTER_API_KEY") else "needs-config",
+                    "detail": "OPENROUTER_API_KEY configured" if _has_value("OPENROUTER_API_KEY") else "Set OPENROUTER_API_KEY",
                 },
                 {
                     "id": "image-generation",
                     "label": "Image generation",
-                    "status": "ready" if _bool_env("OPENAI_API_KEY") else "partial",
-                    "detail": "Configured for direct image output" if _bool_env("OPENAI_API_KEY") else "User key or OPENAI_API_KEY required for real image generation",
+                    "status": "ready" if _has_value("OPENAI_API_KEY") else "partial",
+                    "detail": "Configured for direct image output" if _has_value("OPENAI_API_KEY") else "User key or OPENAI_API_KEY required for real image generation",
                 },
                 {
                     "id": "roblox-oauth",
