@@ -128,6 +128,7 @@ class LumiChatRequest(BaseModel):
     history: list[dict] | None = None
     useOllama: bool = False
     ollamaModel: str | None = None
+    selectedModel: str | None = None
     domain: str | None = None
 
 
@@ -206,6 +207,7 @@ def lumi_chat(payload: LumiChatRequest, authorization: str | None = Header(defau
         history=history,
         use_ollama=payload.useOllama,
         ollama_model=payload.ollamaModel,
+        selected_model=payload.selectedModel,
         domain=payload.domain,
         owner_mode=owner_mode,
     )
@@ -448,8 +450,10 @@ def lumi_models():
     from .ai_router import get_router  # noqa: PLC0415
     from .ollama_provider import get_ollama  # noqa: PLC0415
     ollama = get_ollama()
+    router = get_router()
     return {
-        "cascade": get_router().cascade_info(),
+        "cascade": router.cascade_info(),
+        "freeModels": router.free_model_options(),
         "ollama": {
             "available": ollama.is_available(),
             "host": ollama.host,
@@ -1341,6 +1345,176 @@ def image_filter(payload: ImageFilterRequest):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     job_id = save_output(result, "png")
     return {"ok": True, "imageId": job_id, "imageUrl": f"/api/lumi/tools/export/{job_id}.png"}
+
+
+# ---------------------------------------------------------------------------
+# Document Studio — text/document upload, edit, save, and download
+# ---------------------------------------------------------------------------
+
+_DOCUMENT_DIR = Path(os.environ.get("DOCUMENT_EXPORT_DIR", "/tmp/trezzworld/exports/documents"))
+_DOCUMENT_FORMATS: dict[str, dict[str, str]] = {
+    "txt": {"mime": "text/plain"},
+    "md": {"mime": "text/markdown"},
+    "json": {"mime": "application/json"},
+    "html": {"mime": "text/html"},
+    "csv": {"mime": "text/csv"},
+}
+_DOCUMENT_CONTENT_TYPES = {
+    "text/plain": "txt",
+    "text/markdown": "md",
+    "text/x-markdown": "md",
+    "application/json": "json",
+    "text/html": "html",
+    "text/csv": "csv",
+    "application/csv": "csv",
+}
+
+
+def _document_dir() -> Path:
+    try:
+        _DOCUMENT_DIR.mkdir(parents=True, exist_ok=True)
+        return _DOCUMENT_DIR
+    except OSError:
+        fb = Path(tempfile.gettempdir()) / "trezzworld" / "exports" / "documents"
+        fb.mkdir(parents=True, exist_ok=True)
+        return fb
+
+
+def _document_path(document_id: str) -> tuple[Path, str] | tuple[None, None]:
+    _validate_id(document_id, "documentId")
+    doc_dir = _document_dir()
+    for fmt in _DOCUMENT_FORMATS:
+        candidate = doc_dir / f"{document_id}.{fmt}"
+        if candidate.exists():
+            return candidate, fmt
+    return None, None
+
+
+def _safe_document_title(title: str, fallback: str = "document") -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._ -]+", "", (title or "").strip()).strip(" .")
+    return cleaned[:80] or fallback
+
+
+def _write_document(document_id: str, fmt: str, content: str) -> Path:
+    if fmt not in _DOCUMENT_FORMATS:
+        raise HTTPException(status_code=400, detail=f"Unsupported document format '{fmt}'.")
+    encoded = content.encode("utf-8")
+    if len(encoded) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Document too large — maximum 5 MB.")
+    doc_dir = _document_dir()
+    for existing_fmt in _DOCUMENT_FORMATS:
+        existing = doc_dir / f"{document_id}.{existing_fmt}"
+        if existing.exists() and existing_fmt != fmt:
+            existing.unlink()
+    path = doc_dir / f"{document_id}.{fmt}"
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+class DocumentCreateRequest(BaseModel):
+    title: str = "Untitled"
+    content: str = ""
+    format: str = "md"
+
+
+@app.post("/api/document/create")
+def document_create(payload: DocumentCreateRequest):
+    fmt = payload.format.lower().strip()
+    document_id = str(uuid.uuid4())
+    path = _write_document(document_id, fmt, payload.content)
+    return {
+        "ok": True,
+        "documentId": document_id,
+        "title": _safe_document_title(payload.title, "Untitled"),
+        "format": fmt,
+        "content": payload.content,
+        "sizeBytes": path.stat().st_size,
+        "documentUrl": f"/api/document/{document_id}/download",
+        "source": "manual",
+    }
+
+
+@app.post("/api/document/upload")
+async def document_upload(file: UploadFile = File(...)):
+    filename = file.filename or "document.txt"
+    suffix = Path(filename).suffix.lower().lstrip(".")
+    if suffix == "markdown":
+        suffix = "md"
+    fmt = _DOCUMENT_CONTENT_TYPES.get(file.content_type or "", suffix)
+    if fmt not in _DOCUMENT_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Use TXT, MD, JSON, HTML, or CSV.",
+        )
+    raw = await file.read()
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Document too large — maximum 5 MB.")
+    content = raw.decode("utf-8", errors="replace")
+    document_id = str(uuid.uuid4())
+    path = _write_document(document_id, fmt, content)
+    return {
+        "ok": True,
+        "documentId": document_id,
+        "title": _safe_document_title(Path(filename).stem, "Uploaded document"),
+        "format": fmt,
+        "content": content,
+        "sizeBytes": path.stat().st_size,
+        "documentUrl": f"/api/document/{document_id}/download",
+        "source": "upload",
+    }
+
+
+@app.get("/api/document/{document_id}")
+def document_read(document_id: str):
+    path, fmt = _document_path(document_id)
+    if path is None or fmt is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return {
+        "documentId": document_id,
+        "format": fmt,
+        "content": path.read_text(encoding="utf-8"),
+        "sizeBytes": path.stat().st_size,
+        "documentUrl": f"/api/document/{document_id}/download",
+    }
+
+
+class DocumentUpdateRequest(BaseModel):
+    title: str | None = None
+    content: str
+    format: str | None = None
+
+
+@app.post("/api/document/{document_id}/update")
+def document_update(document_id: str, payload: DocumentUpdateRequest):
+    _validate_id(document_id, "documentId")
+    path, existing_fmt = _document_path(document_id)
+    if path is None or existing_fmt is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    fmt = (payload.format or existing_fmt).lower().strip()
+    next_path = _write_document(document_id, fmt, payload.content)
+    return {
+        "ok": True,
+        "documentId": document_id,
+        "title": _safe_document_title(payload.title or path.stem, "Document"),
+        "format": fmt,
+        "content": payload.content,
+        "sizeBytes": next_path.stat().st_size,
+        "documentUrl": f"/api/document/{document_id}/download",
+        "source": "manual",
+    }
+
+
+@app.get("/api/document/{document_id}/download")
+def document_download(document_id: str, title: str | None = None):
+    path, fmt = _document_path(document_id)
+    if path is None or fmt is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    filename = f"{_safe_document_title(title or path.stem, 'document')}.{fmt}"
+    return FileResponse(
+        path=str(path),
+        media_type=_DOCUMENT_FORMATS[fmt]["mime"],
+        filename=filename,
+    )
 
 
 # ---------------------------------------------------------------------------

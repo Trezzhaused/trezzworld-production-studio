@@ -544,6 +544,7 @@ class AIRouter:
         history: list[dict[str, str]] | None = None,
         use_ollama: bool = False,
         ollama_model: str | None = None,
+        selected_model: str | None = None,
         domain: str | None = None,
         owner_mode: bool = False,
     ) -> ChatResult:
@@ -563,6 +564,7 @@ class AIRouter:
             history: Prior conversation turns.
             use_ollama: Route to local Ollama instead of OpenRouter.
             ollama_model: Specific Ollama model (e.g. 'gemma3:27b').
+            selected_model: Explicit OpenRouter model ID to try before the cascade.
             domain: Creative domain for prompt enhancement
                     ('video'|'music'|'game'|'code'|'creative').
             owner_mode: True only for the verified app owner (SSO-checked in
@@ -585,13 +587,19 @@ class AIRouter:
         if use_ollama or owner_mode:
             from .ollama_provider import get_ollama  # noqa: PLC0415
             ollama = get_ollama()
-            if ollama_model:
-                result = ollama.chat(ollama_model, messages, temperature=0.72, max_tokens=1200)
+            requested_ollama_model = ollama_model or (selected_model if use_ollama else None)
+            if requested_ollama_model:
+                result = ollama.chat(requested_ollama_model, messages, temperature=0.72, max_tokens=1200)
             else:
                 result = ollama.super_gemma_chat(messages, temperature=0.72, max_tokens=1200)
             if result.ok:
                 return ChatResult(model=result.model, content=result.content, ok=True, usage=result.usage)
             # Fall through to OpenRouter if Ollama fails
+
+        if selected_model and not use_ollama:
+            explicit = self._raw_call(selected_model, messages, temperature=0.72, max_tokens=1200)
+            if explicit.ok:
+                return explicit
 
         # 2. OpenRouter cascade — owner gets the full live free catalog
         result = self.owner_cascade(messages, temperature=0.72, max_tokens=1200) if owner_mode else \
@@ -649,6 +657,22 @@ class AIRouter:
             }
             for m in sorted(_CASCADE, key=lambda x: x["pri"])
         ]
+
+    def free_model_options(self) -> list[dict[str, Any]]:
+        """Return free OpenRouter models suitable for explicit selection."""
+        seen: set[str] = set()
+        options: list[dict[str, Any]] = []
+        for model in sorted(_CASCADE, key=lambda x: x["pri"]):
+            if model["tier"] != "free" or model["id"] in seen:
+                continue
+            seen.add(model["id"])
+            options.append({"id": model["id"], "label": model["id"], "source": "curated"})
+        for model_id in _fetch_free_openrouter_models(self.api_key):
+            if model_id in seen:
+                continue
+            seen.add(model_id)
+            options.append({"id": model_id, "label": model_id, "source": "live"})
+        return options
 
 
 # Module-level singleton (no API key required at import time)

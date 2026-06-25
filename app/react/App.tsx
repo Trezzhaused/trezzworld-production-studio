@@ -44,6 +44,29 @@ interface MusicJob {
 }
 
 const API = "/api";
+const LUMI_DRAFT_KEY = "trezzworld_lumi_draft";
+const LUMI_DRAFT_EVENT = "trezzworld:lumi-draft";
+
+interface LumiDraftPayload {
+  text: string;
+  domain?: string;
+}
+
+function storeLumiDraft(payload: LumiDraftPayload) {
+  localStorage.setItem(LUMI_DRAFT_KEY, JSON.stringify(payload));
+  window.dispatchEvent(new Event(LUMI_DRAFT_EVENT));
+}
+
+function consumeLumiDraft(): LumiDraftPayload | null {
+  const raw = localStorage.getItem(LUMI_DRAFT_KEY);
+  if (!raw) return null;
+  localStorage.removeItem(LUMI_DRAFT_KEY);
+  try {
+    return JSON.parse(raw) as LumiDraftPayload;
+  } catch {
+    return null;
+  }
+}
 
 // ── Production style config ───────────────────────────────────────────────────
 
@@ -639,7 +662,7 @@ function MusicEditor({ job }: { job: MusicJob }) {
 
 // ── Video Tab ─────────────────────────────────────────────────────────────────
 
-function VideoTab() {
+function VideoTab({ onOpenLumi }: { onOpenLumi: (payload: LumiDraftPayload) => void }) {
   const [activeStyle, setActiveStyle] = useState<ProductionStyle>("cinematic");
   const [prompt, setPrompt] = useState("");
   const [duration, setDuration] = useState(30);
@@ -788,6 +811,16 @@ function VideoTab() {
           </button>
 
           <div style={{ flex: 1 }} />
+
+          <button
+            onClick={() => onOpenLumi({
+              text: `Help me refine this video production prompt and recommend the best settings:\n\n${prompt || "Describe a new video concept for me."}`,
+              domain: "video",
+            })}
+            style={{ ...pillStyle, cursor: "pointer", color: "#fbbf24" }}
+          >
+            🤖 Open in LUMI
+          </button>
 
           <button
             onClick={createJob}
@@ -1782,6 +1815,12 @@ interface ChatMessage {
   imageUrl?: string | null;
 }
 
+interface FreeModelOption {
+  id: string;
+  label: string;
+  source: string;
+}
+
 const DOMAINS = [
   { id: "default", label: "General" },
   { id: "video", label: "Video Production" },
@@ -1806,12 +1845,18 @@ function LumiTab() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [domain, setDomain] = useState("default");
-  const [useOllama, setUseOllama] = useState(false);
-  const [ollamaModel, setOllamaModel] = useState("");
+  const [modelChoice, setModelChoice] = useState("auto");
   const [ollamaModels, setOllamaModels] = useState<{ id: string; available: boolean }[]>([]);
   const [cascade, setCascade] = useState<{ id: string; tier: string }[]>([]);
+  const [freeModels, setFreeModels] = useState<FreeModelOption[]>([]);
   const sessionId = useRef(getOrCreateSessionId());
   const scrollRef = useRef<HTMLDivElement>(null);
+  const applyDraft = useCallback(() => {
+    const draft = consumeLumiDraft();
+    if (!draft?.text) return;
+    setInput((prev) => prev.trim() ? `${prev}\n\n${draft.text}` : draft.text);
+    if (draft.domain) setDomain(draft.domain);
+  }, []);
 
   useEffect(() => {
     fetch(`${API}/lumi/chat/history?mission_id=${sessionId.current}`)
@@ -1824,9 +1869,17 @@ function LumiTab() {
 
     fetch(`${API}/lumi/models`).then((r) => r.json()).then((d) => {
       setCascade(d.cascade ?? []);
+      setFreeModels(d.freeModels ?? []);
       setOllamaModels(d.ollama?.catalogue ?? []);
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    applyDraft();
+    const handler = () => applyDraft();
+    window.addEventListener(LUMI_DRAFT_EVENT, handler);
+    return () => window.removeEventListener(LUMI_DRAFT_EVENT, handler);
+  }, [applyDraft]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -1838,6 +1891,13 @@ function LumiTab() {
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setSending(true);
+    const wantsOllama = modelChoice === "ollama:auto" || modelChoice.startsWith("ollama:");
+    const selectedOllamaModel = modelChoice.startsWith("ollama:") && modelChoice !== "ollama:auto"
+      ? modelChoice.replace("ollama:", "")
+      : undefined;
+    const selectedModel = modelChoice.startsWith("openrouter:")
+      ? modelChoice.replace("openrouter:", "")
+      : undefined;
     try {
       const token = getTrezzhausToken();
       const res = await fetch(`${API}/lumi/chat`, {
@@ -1849,8 +1909,9 @@ function LumiTab() {
         body: JSON.stringify({
           message: text,
           missionId: sessionId.current,
-          useOllama,
-          ollamaModel: useOllama ? (ollamaModel || undefined) : undefined,
+          useOllama: wantsOllama,
+          ollamaModel: selectedOllamaModel,
+          selectedModel,
           domain,
         }),
       });
@@ -1871,24 +1932,35 @@ function LumiTab() {
           {DOMAINS.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
         </select>
 
-        <button
-          onClick={() => setUseOllama(!useOllama)}
-          style={{ ...pillStyle, cursor: "pointer", color: useOllama ? "#38bdf8" : "#64748b" }}
-          title="Toggle between the free OpenRouter model cascade and your local Ollama"
+        <select
+          value={modelChoice}
+          onChange={(e) => setModelChoice(e.target.value)}
+          aria-label="LUMI model choice"
+          style={pillStyle}
+          title="Choose the AI model or let LUMI auto-route"
         >
-          {useOllama ? "🖥 Local Ollama" : "☁ OpenRouter cascade"}
-        </button>
+          <option value="auto">☁ Auto free cascade</option>
+          <optgroup label="Free OpenRouter models">
+            {freeModels.map((model) => (
+              <option key={model.id} value={`openrouter:${model.id}`}>{model.label}</option>
+            ))}
+          </optgroup>
+          <optgroup label="Local Ollama">
+            <option value="ollama:auto">🖥 Auto local model</option>
+            {ollamaModels.filter((m) => m.available).map((m) => (
+              <option key={m.id} value={`ollama:${m.id}`}>{m.id}</option>
+            ))}
+          </optgroup>
+        </select>
 
-        {useOllama && (
-          <select value={ollamaModel} onChange={(e) => setOllamaModel(e.target.value)} aria-label="Ollama model" style={pillStyle}>
-            <option value="">Auto (SuperGemma)</option>
-            {ollamaModels.filter((m) => m.available).map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
-          </select>
-        )}
-
-        {!useOllama && cascade.length > 0 && (
+        {!modelChoice.startsWith("ollama:") && modelChoice !== "ollama:auto" && cascade.length > 0 && (
           <span style={{ color: "#475569", fontSize: 11 }} title={cascade.map((c) => c.id).join(", ")}>
             {cascade.length} models in cascade
+          </span>
+        )}
+        {(modelChoice === "ollama:auto" || modelChoice.startsWith("ollama:")) && (
+          <span style={{ color: "#475569", fontSize: 11 }}>
+            Local Ollama mode
           </span>
         )}
       </div>
@@ -1978,7 +2050,7 @@ interface ImageResult {
   note?: string;
 }
 
-function ImageTab() {
+function ImageTab({ onOpenLumi }: { onOpenLumi: (payload: LumiDraftPayload) => void }) {
   const [prompt, setPrompt] = useState("");
   const [style, setStyle] = useState("cinematic");
   const [width, setWidth] = useState(1024);
@@ -2104,6 +2176,15 @@ function ImageTab() {
             </select>
             <div style={{ flex: 1 }} />
             <button
+              onClick={() => onOpenLumi({
+                text: `Help me improve this image prompt and suggest the best creative direction:\n\n${prompt || "Create a new image concept for me."}`,
+                domain: "creative",
+              })}
+              style={{ ...pillStyle, cursor: "pointer", color: "#fbbf24" }}
+            >
+              🤖 Open in LUMI
+            </button>
+            <button
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
               style={{ ...btnStyle(!uploading), background: "#1e293b" }}
@@ -2222,6 +2303,250 @@ function ImageTab() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Document Studio Tab ────────────────────────────────────────────────────────
+
+const DOCUMENT_FORMATS = [
+  { id: "md", label: "Markdown" },
+  { id: "txt", label: "Plain Text" },
+  { id: "json", label: "JSON" },
+  { id: "html", label: "HTML" },
+  { id: "csv", label: "CSV" },
+];
+
+interface DocumentRecord {
+  documentId: string;
+  title: string;
+  format: string;
+  content: string;
+  documentUrl: string;
+  sizeBytes: number;
+  source: "manual" | "upload";
+}
+
+function DocumentTab({ onOpenLumi }: { onOpenLumi: (payload: LumiDraftPayload) => void }) {
+  const [title, setTitle] = useState("Untitled");
+  const [format, setFormat] = useState("md");
+  const [content, setContent] = useState("");
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [selected, setSelected] = useState<DocumentRecord | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const upsertDocument = (document: DocumentRecord) => {
+    setDocuments((prev) => [document, ...prev.filter((item) => item.documentId !== document.documentId)]);
+    setSelected(document);
+    setTitle(document.title);
+    setFormat(document.format);
+    setContent(document.content);
+  };
+
+  const createDocument = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch(`${API}/document/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, format, content }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Document creation failed.");
+      upsertDocument(data as DocumentRecord);
+    } catch (err: any) {
+      setError(err.message || "Document creation failed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveDocument = async () => {
+    if (!selected) return createDocument();
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch(`${API}/document/${selected.documentId}/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, format, content }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Document save failed.");
+      upsertDocument(data as DocumentRecord);
+    } catch (err: any) {
+      setError(err.message || "Document save failed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const uploadDocument = async (file: File) => {
+    setUploading(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${API}/document/upload`, { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Document upload failed.");
+      upsertDocument(data as DocumentRecord);
+    } catch (err: any) {
+      setError(err.message || "Document upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const startFresh = () => {
+    setSelected(null);
+    setTitle("Untitled");
+    setFormat("md");
+    setContent("");
+    setError("");
+  };
+
+  return (
+    <div style={{ display: "flex", gap: 16 }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, letterSpacing: 1 }}>📄 DOCUMENT STUDIO</div>
+
+        <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 14 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Document title"
+              style={{ ...inputStyle, flex: 1, minWidth: 180 }}
+            />
+            <select value={format} onChange={(e) => setFormat(e.target.value)} style={pillStyle}>
+              {DOCUMENT_FORMATS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+            </select>
+            <button onClick={startFresh} style={{ ...pillStyle, cursor: "pointer" }}>＋ New</button>
+            <button
+              onClick={() => onOpenLumi({
+                text: `Help me write or revise this ${format.toUpperCase()} document titled "${title || "Untitled"}":\n\n${content.slice(0, 4000) || "Create a new draft for me."}`,
+                domain: "creative",
+              })}
+              style={{ ...pillStyle, cursor: "pointer", color: "#fbbf24" }}
+            >
+              🤖 Open in LUMI
+            </button>
+          </div>
+
+          <textarea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            placeholder="Write, paste, or upload your document here..."
+            rows={18}
+            style={{ ...inputStyle, resize: "vertical", fontFamily: "'IBM Plex Mono', 'SFMono-Regular', monospace", marginBottom: 10 }}
+          />
+
+          <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ color: "#475569", fontSize: 11 }}>
+              {(new Blob([content]).size / 1024).toFixed(1)} KB • {content.length.toLocaleString()} characters
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                onClick={() => fileRef.current?.click()}
+                disabled={uploading}
+                style={{ ...btnStyle(!uploading), background: "#1e293b" }}
+              >
+                {uploading ? "⏳ Uploading..." : "⬆ Upload Document"}
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".txt,.md,.markdown,.json,.html,.htm,.csv,text/plain,text/markdown,application/json,text/html,text/csv"
+                style={{ display: "none" }}
+                onChange={(e) => { if (e.target.files?.[0]) uploadDocument(e.target.files[0]); }}
+              />
+              <button
+                onClick={selected ? saveDocument : createDocument}
+                disabled={saving}
+                style={{ ...btnStyle(!saving), padding: "10px 20px", fontWeight: 700 }}
+              >
+                {saving ? "⏳ Saving..." : selected ? "💾 Save Document" : "📄 Create Document"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {error && (
+          <div style={{ background: "#7f1d1d22", border: "1px solid #ef444444", borderRadius: 6, padding: "8px 12px", color: "#fca5a5", fontSize: 12 }}>
+            {error}
+          </div>
+        )}
+
+        {documents.length > 0 && (
+          <div>
+            <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 8 }}>
+              DOCUMENTS ({documents.length})
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {documents.map((document) => (
+                <button
+                  key={document.documentId}
+                  type="button"
+                  onClick={() => upsertDocument(document)}
+                  style={{
+                    background: selected?.documentId === document.documentId ? "#0f2438" : "#0a0f1a",
+                    border: `1px solid ${selected?.documentId === document.documentId ? "#38bdf8" : "#1e3a5f"}`,
+                    borderRadius: 6,
+                    padding: "10px 14px",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                    <div style={{ color: "#94a3b8", fontSize: 12, fontWeight: 600 }}>{document.title}</div>
+                    <span style={{ color: "#475569", fontSize: 10 }}>{document.format.toUpperCase()}</span>
+                  </div>
+                  <div style={{ color: "#475569", fontSize: 11, marginTop: 4 }}>
+                    {document.content.slice(0, 120)}{document.content.length > 120 ? "..." : ""}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ width: 360, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 14 }}>
+          <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 700, marginBottom: 8 }}>
+            {title || "Untitled"}
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+            <span style={{ ...pillStyle, fontSize: 10 }}>{format.toUpperCase()}</span>
+            {selected && (
+              <span style={{ ...pillStyle, fontSize: 10, color: selected.source === "upload" ? "#f59e0b" : "#22c55e" }}>
+                {selected.source === "upload" ? "⬆ Uploaded" : "✍ Studio draft"}
+              </span>
+            )}
+          </div>
+          <pre style={{
+            background: "#020817", borderRadius: 8, padding: 12, margin: 0,
+            color: "#94a3b8", fontSize: 11, whiteSpace: "pre-wrap", maxHeight: 420, overflowY: "auto",
+          }}>
+            {content || "Document preview will appear here."}
+          </pre>
+          {selected && (
+            <a
+              href={`${selected.documentUrl}?title=${encodeURIComponent(title || selected.title)}`}
+              download
+              style={{ ...btnStyle(true), textDecoration: "none", display: "block", textAlign: "center", marginTop: 10 }}
+            >
+              ⬇ Download Document
+            </a>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -2426,7 +2751,8 @@ const MODULE_DEFS = [
   { id: "image",    icon: "🖼",  label: "Image Studio",    desc: "AI image creation, upload, GIMP touchup filters, download", color: "#a78bfa" },
   { id: "music",    icon: "🎵", label: "Music Composer",   desc: "Text-to-music via MusicGen, AudioGen, Riffusion. BPM, stems, download", color: "#34d399" },
   { id: "voice",    icon: "🎙", label: "Voice Studio",     desc: "Text-to-speech narration in 14 voices. No API key needed", color: "#f472b6" },
-  { id: "lumi",     icon: "🤖", label: "LUMI AI",          desc: "Unlimited AI chat, image gen, vector art, code, creative direction", color: "#fbbf24" },
+  { id: "documents", icon: "📄", label: "Document Studio", desc: "Text and document upload, editing, save, download, and LUMI handoff", color: "#60a5fa" },
+  { id: "lumi",     icon: "🤖", label: "LUMI AI",          desc: "AI chat with explicit model picker, image gen, vector art, code, creative direction", color: "#fbbf24" },
   { id: "roblox",   icon: "🎮", label: "Roblox Creator",   desc: "AI-designed Luau games, monetization, publish to Roblox", color: "#f97316" },
   { id: "settings", icon: "⚙",  label: "Settings & Keys",  desc: "API keys for AI providers, TrezzHaus account SSO, image key test", color: "#64748b" },
 ];
@@ -2484,7 +2810,7 @@ function ControlTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
           <span style={{ color: "#e2e8f0" }}>Production Studio</span>
         </div>
         <div style={{ color: "#64748b", fontSize: 14, marginBottom: 16, maxWidth: 640 }}>
-          Your AAA+ AI creative studio — video, image, music, voice, games, and unlimited LUMI AI.
+          Your AAA+ AI creative studio — video, image, music, voice, documents, games, and unlimited LUMI AI.
           Everything you need to create, edit, upload, download, and launch.
         </div>
 
@@ -2705,7 +3031,7 @@ function ControlTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
 
 // ── App shell ─────────────────────────────────────────────────────────────────
 
-type Tab = "control" | "video" | "image" | "music" | "voice" | "lumi" | "roblox" | "settings";
+type Tab = "control" | "video" | "image" | "music" | "voice" | "documents" | "lumi" | "roblox" | "settings";
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "control",  label: "Control",  icon: "🎛" },
@@ -2713,6 +3039,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "image",    label: "Image",    icon: "🖼" },
   { id: "music",    label: "Music",    icon: "🎵" },
   { id: "voice",    label: "Voice",    icon: "🎙" },
+  { id: "documents", label: "Docs",    icon: "📄" },
   { id: "lumi",     label: "LUMI",     icon: "🤖" },
   { id: "roblox",   label: "Roblox",   icon: "🎮" },
   { id: "settings", label: "Settings", icon: "⚙" },
@@ -2733,6 +3060,10 @@ export default function App() {
     requestAnimationFrame(() => {
       document.getElementById(`tab-${nextTab}`)?.focus();
     });
+  };
+  const openLumi = (payload: LumiDraftPayload) => {
+    storeLumiDraft(payload);
+    focusTab("lumi");
   };
   const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -2844,16 +3175,19 @@ export default function App() {
           {tab === "control" && <ControlTab onNavigate={setTab} />}
         </section>
         <section id="panel-video" role="tabpanel" aria-labelledby="tab-video" hidden={tab !== "video"}>
-          {tab === "video" && <VideoTab />}
+          {tab === "video" && <VideoTab onOpenLumi={openLumi} />}
         </section>
         <section id="panel-image" role="tabpanel" aria-labelledby="tab-image" hidden={tab !== "image"}>
-          {tab === "image" && <ImageTab />}
+          {tab === "image" && <ImageTab onOpenLumi={openLumi} />}
         </section>
         <section id="panel-music" role="tabpanel" aria-labelledby="tab-music" hidden={tab !== "music"}>
           {tab === "music" && <MusicTab />}
         </section>
         <section id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" hidden={tab !== "voice"}>
           {tab === "voice" && <VoiceTab />}
+        </section>
+        <section id="panel-documents" role="tabpanel" aria-labelledby="tab-documents" hidden={tab !== "documents"}>
+          {tab === "documents" && <DocumentTab onOpenLumi={openLumi} />}
         </section>
         <section id="panel-lumi" role="tabpanel" aria-labelledby="tab-lumi" hidden={tab !== "lumi"}>
           {tab === "lumi" && <LumiTab />}
