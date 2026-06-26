@@ -59,7 +59,7 @@ class BackendSmokeTests(unittest.TestCase):
                 if payload.get("status") == "running":
                     return
             except Exception as exc:  # noqa: BLE001
-                last_error = str(exc)
+                last_error = f"{type(exc).__name__}: {exc}"
             time.sleep(0.5)
         raise RuntimeError(f"Backend failed to start: {last_error}")
 

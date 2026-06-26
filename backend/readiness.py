@@ -88,13 +88,15 @@ def _music_archive_dir() -> Path:
     return Path(os.environ.get("MUSIC_ARCHIVE_DIR", "/tmp/trezzworld/exports/archive/music"))
 
 
-def _file_contains(path: Path, needle: str) -> bool:
+def _load_package_scripts(path: Path) -> dict[str, str]:
     if not path.exists():
-        return False
+        return {}
     try:
-        return needle in path.read_text(encoding="utf-8")
-    except OSError:
-        return False
+        package = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    scripts = package.get("scripts")
+    return scripts if isinstance(scripts, dict) else {}
 
 
 def _user_key_configured(*providers: str) -> bool:
@@ -350,8 +352,8 @@ def build_backend_readiness() -> dict[str, Any]:
     )
 
     smoke_test_path = REPO_ROOT / "backend" / "tests" / "test_backend_smoke.py"
-    package_json = REPO_ROOT / "package.json"
-    smoke_test_ready = smoke_test_path.exists() and _file_contains(package_json, "test:backend")
+    scripts = _load_package_scripts(REPO_ROOT / "package.json")
+    smoke_test_ready = smoke_test_path.exists() and scripts.get("test") == "npm run test:backend" and "test:backend" in scripts
     checks.append(
         _make_check(
             check_id="backend-smoke-tests",
