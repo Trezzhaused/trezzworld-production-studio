@@ -15,7 +15,8 @@
     "backend:dev": "python -m uvicorn backend.main:app --reload --port 8000",
     "dev:web": "vite",
     "build:web": "vite build",
-    "test": "echo 'Tests passing' && exit 0"
+    "test:backend": "python -m unittest discover -s backend/tests -p \"test_*.py\"",
+    "test": "npm run test:backend"
   },
   "dependencies": {
     "react": "^18.3.1",

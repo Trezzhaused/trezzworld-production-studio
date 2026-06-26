@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .readiness import build_production_readiness
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_JSON = REPO_ROOT / "package.json"
@@ -106,52 +108,7 @@ def _phase_status(required_files: list[str]) -> str:
 
 
 def _build_readiness() -> dict[str, Any]:
-    scripts = _load_npm_scripts()
-    checks = [
-        {
-            "category": "Build passes",
-            "goal": "Required",
-            "passed": _check_path("dist/renderer") or bool(scripts.get("build")),
-        },
-        {
-            "category": "Tests passing",
-            "goal": "Required",
-            "passed": _check_path("testing/TestRunner.ts"),
-        },
-        {
-            "category": "Coverage",
-            "goal": ">=95%",
-            "passed": True,  # Coverage met via automated test pipeline
-        },
-        {
-            "category": "Security scan",
-            "goal": "Required",
-            "passed": _check_path("security"),
-        },
-        {
-            "category": "Documentation",
-            "goal": "Required",
-            "passed": _check_path("README.md") or _check_path("docs/README.md"),
-        },
-        {
-            "category": "Performance",
-            "goal": "Required",
-            "passed": _check_path("testing/PerformanceAnalyzer.ts"),
-        },
-        {
-            "category": "Asset validation",
-            "goal": "Required",
-            "passed": _check_path("quality/QualityControl.ts"),
-        },
-        {
-            "category": "Deployment validation",
-            "goal": "Required",
-            "passed": _check_path("deployment"),
-        },
-    ]
-    passed = sum(1 for check in checks if check["passed"])
-    score = int((passed / len(checks)) * 100)
-    return {"score": score, "checks": checks}
+    return build_production_readiness()
 
 
 def build_meta_development_status() -> dict[str, Any]:

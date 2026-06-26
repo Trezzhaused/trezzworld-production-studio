@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from .config import APP_NAME, VERSION
 from .meta_builder import build_meta_builder_status, continue_meta_builder
 from .meta_development import build_meta_development_status
+from .readiness import build_backend_readiness
 from .studio_control_plane import boot_studio_mission, build_studio_control_plane
 from .studio_platform_status import build_studio_platform_status
 
@@ -25,7 +26,20 @@ app.add_middleware(
 
 @app.get("/api/status")
 def status():
-    return {"status": "running", "version": VERSION}
+    readiness = build_backend_readiness()
+    return {
+        "status": "running",
+        "version": VERSION,
+        "ready": readiness["ready"],
+        "readinessScore": readiness["score"],
+        "blockers": readiness["blockers"],
+        "warnings": readiness["warnings"],
+    }
+
+
+@app.get("/api/health/readiness")
+def health_readiness():
+    return build_backend_readiness()
 
 @app.get("/api/debug/ffmpeg")
 def debug_ffmpeg():
