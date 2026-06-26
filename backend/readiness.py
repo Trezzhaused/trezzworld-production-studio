@@ -353,7 +353,8 @@ def build_backend_readiness() -> dict[str, Any]:
 
     smoke_test_path = REPO_ROOT / "backend" / "tests" / "test_backend_smoke.py"
     scripts = _load_package_scripts(REPO_ROOT / "package.json")
-    smoke_test_ready = smoke_test_path.exists() and scripts.get("test") == "npm run test:backend" and "test:backend" in scripts
+    script_text = " ".join(str(scripts.get(name, "")) for name in ("test", "test:backend"))
+    smoke_test_ready = smoke_test_path.exists() and "unittest" in script_text and "backend/tests" in script_text
     checks.append(
         _make_check(
             check_id="backend-smoke-tests",
