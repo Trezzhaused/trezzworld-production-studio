@@ -19,6 +19,8 @@
     "test": "npm run test:backend"
   },
   "dependencies": {
+    "@babylonjs/loaders": "^9.14.0",
+    "babylonjs": "^9.14.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
