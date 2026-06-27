@@ -53,6 +53,69 @@ interface LumiDraftPayload {
   domain?: string;
 }
 
+type StudioRole = "admin" | "dev" | "user";
+
+interface StudioIdentity {
+  loggedIn: boolean;
+  name: string;
+  role: StudioRole;
+}
+
+const ROLE_STORAGE_KEY = "trezzworld_studio_identity";
+const THEME_STORAGE_KEY = "trezzworld_studio_theme";
+const ROLE_DETAILS: Record<StudioRole, { label: string; badge: string; access: string; summary: string; accent: string }> = {
+  admin: {
+    label: "Admin",
+    badge: "👑 Admin",
+    access: "Unlimited",
+    summary: "Unlock full LUMI, platform controls, and code-level editing for every mission.",
+    accent: "#22c55e",
+  },
+  dev: {
+    label: "Dev",
+    badge: "🛠 Dev",
+    access: "Extended",
+    summary: "Get preview access, deeper automation, and near-limitless creative tooling.",
+    accent: "#38bdf8",
+  },
+  user: {
+    label: "User",
+    badge: "🧑 User",
+    access: "Safe",
+    summary: "Use policy-aware prompts, safe generation, and guided workflows aligned to U.S. AI use expectations.",
+    accent: "#f59e0b",
+  },
+};
+
+function getStoredIdentity(): StudioIdentity | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(ROLE_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as StudioIdentity;
+    if (!parsed.loggedIn || !parsed.name?.trim()) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveIdentity(identity: StudioIdentity) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(ROLE_STORAGE_KEY, JSON.stringify(identity));
+}
+
+function getStoredTheme(): "dark" | "light" {
+  if (typeof window === "undefined") return "dark";
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  return stored === "light" ? "light" : "dark";
+}
+
+function saveTheme(theme: "dark" | "light") {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+}
+
 function storeLumiDraft(payload: LumiDraftPayload) {
   localStorage.setItem(LUMI_DRAFT_KEY, JSON.stringify(payload));
   window.dispatchEvent(new Event(LUMI_DRAFT_EVENT));
@@ -2758,7 +2821,7 @@ const MODULE_DEFS = [
   { id: "settings", icon: "⚙",  label: "Settings & Keys",  desc: "API keys for AI providers, TrezzHaus account SSO, image key test", color: "#64748b" },
 ];
 
-function ControlTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
+function ControlTab({ onNavigate, identity, theme }: { onNavigate: (tab: Tab) => void; identity: StudioIdentity | null; theme: "dark" | "light" }) {
   const [cpData, setCpData] = useState<any>(null);
   const [platformStatus, setPlatformStatus] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -2798,26 +2861,93 @@ function ControlTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
   };
 
   const readiness = cpData?.productionReadiness ?? 0;
+  const roleProfile = identity?.loggedIn ? ROLE_DETAILS[identity.role] : ROLE_DETAILS.user;
+  const isLight = theme === "light";
+  const heroSurface = isLight
+    ? "linear-gradient(135deg, rgba(56, 189, 248, 0.12) 0%, rgba(255,255,255,0.98) 45%, rgba(224,242,254,0.96) 100%)"
+    : "linear-gradient(135deg, rgba(14, 165, 233, 0.16) 0%, rgba(15, 23, 42, 0.96) 45%, rgba(2, 6, 23, 0.98) 100%)";
+  const heroBorder = isLight ? "rgba(14,165,233,0.16)" : "rgba(56,189,248,0.28)";
+  const heroText = isLight ? "#0f172a" : "#e2e8f0";
+  const heroMuted = isLight ? "#475569" : "#64748b";
+  const heroGlow = isLight ? "rgba(14,165,233,0.16)" : "rgba(2,6,23,0.46)";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       {/* Hero banner */}
       <div style={{
-        background: "linear-gradient(135deg, #0a0f1a 0%, #0f172a 50%, #0a0f1a 100%)",
-        border: "1px solid #1e3a5f", borderRadius: 16, padding: 28,
+        background: heroSurface,
+        border: `1px solid ${heroBorder}`,
+        borderRadius: 20,
+        padding: 28,
+        boxShadow: `0 24px 70px ${heroGlow}`,
       }}>
-        <div style={{ fontSize: 24, fontWeight: 900, letterSpacing: -0.5, marginBottom: 6 }}>
-          <span style={{ color: "#38bdf8" }}>TrezzWorld</span>{" "}
-          <span style={{ color: "#e2e8f0" }}>Production Studio</span>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 24, fontWeight: 900, letterSpacing: -0.5 }}>
+              <span style={{ color: "#38bdf8" }}>TrezzWorld</span>{" "}
+              <span style={{ color: heroText }}>Production Studio</span>
+            </div>
+            <div style={{ color: heroMuted, fontSize: 14, maxWidth: 640, lineHeight: 1.6, marginTop: 4 }}>
+              Your AAA+ AI creative studio — video, image, music, voice, documents, games, and LUMI AI.
+              Every workspace now opens with role-aware access, compliance-aware guardrails, and a premium studio shell.
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <div style={{
+              background: `${roleProfile.accent}22`,
+              border: `1px solid ${roleProfile.accent}55`,
+              color: roleProfile.accent,
+              borderRadius: 999,
+              padding: "6px 10px",
+              fontSize: 11,
+              fontWeight: 700,
+            }}>
+              {identity?.loggedIn ? `${identity.name} · ${roleProfile.badge}` : "Guest · Safe mode"}
+            </div>
+            <div style={{
+              background: isLight ? "rgba(255,255,255,0.8)" : "rgba(15,23,42,0.72)",
+              color: heroText,
+              border: `1px solid ${heroBorder}`,
+              borderRadius: 999,
+              padding: "6px 10px",
+              fontSize: 11,
+              fontWeight: 700,
+            }}>
+              ⚡ {roleProfile.access} access
+            </div>
+          </div>
         </div>
-        <div style={{ color: "#64748b", fontSize: 14, marginBottom: 16, maxWidth: 640 }}>
-          Your AAA+ AI creative studio — video, image, music, voice, documents, games, and unlimited LUMI AI.
-          Everything you need to create, edit, upload, download, and launch.
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 16 }}>
+          <div style={{
+            background: isLight ? "rgba(255,255,255,0.8)" : "rgba(15,23,42,0.72)",
+            border: `1px solid ${heroBorder}`,
+            borderRadius: 12,
+            padding: 12,
+          }}>
+            <div style={{ color: roleProfile.accent, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+              Access layer
+            </div>
+            <div style={{ color: heroText, fontSize: 13, fontWeight: 700, marginBottom: 4 }}>{roleProfile.label} workspace</div>
+            <div style={{ color: heroMuted, fontSize: 12, lineHeight: 1.5 }}>{roleProfile.summary}</div>
+          </div>
+          <div style={{
+            background: isLight ? "rgba(255,255,255,0.8)" : "rgba(15,23,42,0.72)",
+            border: `1px solid ${heroBorder}`,
+            borderRadius: 12,
+            padding: 12,
+          }}>
+            <div style={{ color: "#a78bfa", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+              New tools
+            </div>
+            <div style={{ color: heroText, fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Studio command center</div>
+            <div style={{ color: heroMuted, fontSize: 12, lineHeight: 1.5 }}>Jump into LUMI, video, preview, or settings from one polished launchpad.</div>
+          </div>
         </div>
 
         {/* Readiness meter */}
         <div style={{ maxWidth: 400, marginBottom: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", color: "#64748b", fontSize: 11, marginBottom: 4 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", color: heroMuted, fontSize: 11, marginBottom: 4 }}>
             <span>Studio Readiness</span>
             <span style={{ color: readiness >= 80 ? "#22c55e" : readiness >= 50 ? "#f59e0b" : "#ef4444", fontWeight: 700 }}>
               {readiness}%
@@ -2826,8 +2956,20 @@ function ControlTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
           <ProgressBar value={readiness} color={readiness >= 80 ? "#22c55e" : readiness >= 50 ? "#f59e0b" : "#38bdf8"} />
         </div>
 
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+          <button type="button" onClick={() => onNavigate("lumi")} style={{ ...btnStyle(true), padding: "10px 16px", fontWeight: 700 }}>
+            🤖 Open LUMI
+          </button>
+          <button type="button" onClick={() => onNavigate("video")} style={{ ...btnStyle(true), padding: "10px 16px", fontWeight: 700 }}>
+            🎬 Launch Video
+          </button>
+          <button type="button" onClick={() => onNavigate("settings")} style={{ ...btnStyle(true), padding: "10px 16px", fontWeight: 700 }}>
+            🧭 Review Settings
+          </button>
+        </div>
+
         {/* Mission launcher */}
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <input
             type="text"
             value={missionPrompt}
@@ -2835,7 +2977,7 @@ function ControlTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
             onKeyDown={(e) => { if (e.key === "Enter") bootMission(); }}
             aria-label="Mission prompt"
             placeholder={cpData?.missionPromptPlaceholder ?? "Describe your creative mission..."}
-            style={{ ...inputStyle, flex: 1, fontSize: 13 }}
+            style={{ ...inputStyle, flex: 1, fontSize: 13, minWidth: 220 }}
           />
           <button onClick={bootMission} disabled={booting || !missionPrompt.trim()}
             style={{ ...btnStyle(!booting && !!missionPrompt.trim()), padding: "10px 20px", fontWeight: 700 }}>
@@ -2843,7 +2985,7 @@ function ControlTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
           </button>
         </div>
         {bootResult && (
-          <div style={{ marginTop: 10, background: "#0f2438", borderRadius: 8, padding: "10px 14px", color: "#94a3b8", fontSize: 12 }}>
+          <div style={{ marginTop: 10, background: isLight ? "rgba(255,255,255,0.75)" : "#0f2438", borderRadius: 8, padding: "10px 14px", color: heroMuted, fontSize: 12 }}>
             <div style={{ color: "#38bdf8", fontWeight: 700, marginBottom: 4 }}>
               ✓ Mission {bootResult.missionId} launched
             </div>
@@ -3058,6 +3200,11 @@ export default function App() {
   const [tab, setTab] = useState<Tab>(getInitialTab());
   const [session, setSession] = useState<{ loggedIn: boolean; isOwner: boolean; account: any } | null>(null);
   const [skipLinkVisible, setSkipLinkVisible] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">(() => getStoredTheme());
+  const [profile, setProfile] = useState<StudioIdentity | null>(() => getStoredIdentity());
+  const [draftName, setDraftName] = useState(profile?.name ?? "");
+  const [draftRole, setDraftRole] = useState<StudioRole>(profile?.role ?? "user");
+  const [authMessage, setAuthMessage] = useState("");
   const focusTab = (nextTab: Tab) => {
     setTab(nextTab);
     requestAnimationFrame(() => {
@@ -3078,6 +3225,36 @@ export default function App() {
     focusTab(TABS[nextIndex].id);
   };
 
+  const handleSignIn = (event: React.FormEvent) => {
+    event.preventDefault();
+    const name = draftName.trim();
+    if (!name) {
+      setAuthMessage("Please enter your name to unlock the studio.");
+      return;
+    }
+
+    const nextProfile: StudioIdentity = { loggedIn: true, name, role: draftRole };
+    setProfile(nextProfile);
+    saveIdentity(nextProfile);
+    setAuthMessage("");
+  };
+
+  const handleSignOut = () => {
+    setProfile(null);
+    window.localStorage.removeItem(ROLE_STORAGE_KEY);
+    setDraftName("");
+    setDraftRole("user");
+    setAuthMessage("");
+  };
+
+  useEffect(() => {
+    saveTheme(theme);
+  }, [theme]);
+
+  useEffect(() => {
+    if (profile?.loggedIn) saveIdentity(profile);
+  }, [profile]);
+
   useEffect(() => {
     const token = getTrezzhausToken();
     if (!token) { setSession({ loggedIn: false, isOwner: false, account: null }); return; }
@@ -3085,11 +3262,130 @@ export default function App() {
       .then((r) => r.json()).then(setSession).catch(() => setSession({ loggedIn: false, isOwner: false, account: null }));
   }, []);
 
+  const activeIdentity = profile?.loggedIn ? profile : null;
+  const shellPalette = theme === "dark"
+    ? {
+        background: "linear-gradient(180deg, #020817 0%, #040d1e 100%)",
+        text: "#e2e8f0",
+        muted: "#64748b",
+        surface: "rgba(2, 8, 23, 0.8)",
+        border: "rgba(30, 41, 59, 0.9)",
+        panel: "rgba(10, 15, 26, 0.92)",
+        accent: "#38bdf8",
+      }
+    : {
+        background: "linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%)",
+        text: "#0f172a",
+        muted: "#475569",
+        surface: "rgba(255, 255, 255, 0.82)",
+        border: "rgba(14, 165, 233, 0.16)",
+        panel: "rgba(255, 255, 255, 0.9)",
+        accent: "#0f766e",
+      };
+
+  if (!activeIdentity) {
+    return (
+      <div style={{
+        minHeight: "100vh",
+        background: shellPalette.background,
+        color: shellPalette.text,
+        fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+      }}>
+        <div style={{
+          width: "100%",
+          maxWidth: 1080,
+          background: theme === "dark" ? "rgba(2, 8, 23, 0.9)" : "rgba(255, 255, 255, 0.95)",
+          border: `1px solid ${shellPalette.border}`,
+          borderRadius: 24,
+          boxShadow: theme === "dark" ? "0 24px 70px rgba(2,6,23,0.45)" : "0 24px 70px rgba(14,165,233,0.14)",
+          padding: 28,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
+            <div>
+              <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: -0.5 }}>
+                <span style={{ color: shellPalette.accent }}>TrezzWorld</span> Studio Access
+              </div>
+              <div style={{ color: shellPalette.muted, marginTop: 6, maxWidth: 620, lineHeight: 1.6 }}>
+                Sign in with a role to enter the AI creator hub. Admins unlock full orchestration, Devs get near-limitless preview and editing powers, and users stay in a policy-aligned safe workflow.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              style={{ ...btnStyle(true), padding: "10px 14px", fontWeight: 700 }}
+            >
+              {theme === "dark" ? "☀ Light mode" : "🌙 Dark mode"}
+            </button>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 22 }}>
+            {(["admin", "dev", "user"] as StudioRole[]).map((role) => {
+              const details = ROLE_DETAILS[role];
+              const selected = draftRole === role;
+              return (
+                <button
+                  key={role}
+                  type="button"
+                  onClick={() => setDraftRole(role)}
+                  style={{
+                    textAlign: "left",
+                    padding: 14,
+                    borderRadius: 14,
+                    border: selected ? `2px solid ${details.accent}` : `1px solid ${shellPalette.border}`,
+                    background: selected ? `${details.accent}16` : shellPalette.panel,
+                    color: shellPalette.text,
+                    cursor: "pointer",
+                    boxShadow: selected ? `0 16px 40px ${details.accent}22` : "none",
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>{details.badge}</div>
+                  <div style={{ fontSize: 12, color: shellPalette.muted, lineHeight: 1.5 }}>{details.summary}</div>
+                </button>
+              );
+            })}
+          </div>
+
+          <form onSubmit={handleSignIn} style={{ display: "grid", gap: 12, maxWidth: 480 }}>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: shellPalette.muted }}>Display name</span>
+              <input
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                placeholder="Enter your name or alias"
+                style={{ ...inputStyle, background: theme === "dark" ? "#0f172a" : "#f8fafc", color: shellPalette.text }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: shellPalette.muted }}>Workspace role</span>
+              <select
+                value={draftRole}
+                onChange={(e) => setDraftRole(e.target.value as StudioRole)}
+                style={{ ...inputStyle, background: theme === "dark" ? "#0f172a" : "#f8fafc", color: shellPalette.text }}
+              >
+                <option value="admin">Admin</option>
+                <option value="dev">Dev</option>
+                <option value="user">User</option>
+              </select>
+            </label>
+            {authMessage ? <div style={{ color: "#f59e0b", fontSize: 12, fontWeight: 600 }}>{authMessage}</div> : null}
+            <button type="submit" style={{ ...btnStyle(true), padding: "12px 16px", fontWeight: 700, maxWidth: 220 }}>
+              Enter Studio
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{
       minHeight: "100vh",
-      background: "linear-gradient(180deg, #020817 0%, #040d1e 100%)",
-      color: "#e2e8f0",
+      background: shellPalette.background,
+      color: shellPalette.text,
       fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
       display: "flex",
       flexDirection: "column",
@@ -3104,7 +3400,7 @@ export default function App() {
               top: 8,
               left: 8,
               zIndex: 200,
-              background: "#0ea5e9",
+              background: shellPalette.accent,
               color: "#fff",
               padding: "8px 12px",
               borderRadius: 6,
@@ -3118,64 +3414,79 @@ export default function App() {
       </a>
       {/* Header */}
       <header style={{
-        borderBottom: "1px solid #0f172a",
+        borderBottom: `1px solid ${shellPalette.border}`,
         padding: "10px 24px",
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        background: "#020817cc", backdropFilter: "blur(8px)",
+        background: shellPalette.surface, backdropFilter: "blur(8px)",
         position: "sticky", top: 0, zIndex: 100,
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: -0.5 }}>
-            <span style={{ color: "#38bdf8" }}>Trezz</span>
-            <span style={{ color: "#e2e8f0" }}>World</span>
-            <span style={{ color: "#64748b", fontSize: 12, fontWeight: 400, marginLeft: 8 }}>
+            <span style={{ color: shellPalette.accent }}>Trezz</span>
+            <span style={{ color: shellPalette.text }}>World</span>
+            <span style={{ color: shellPalette.muted, fontSize: 12, fontWeight: 400, marginLeft: 8 }}>
               Production Studio
             </span>
           </div>
-          {session?.loggedIn && (
+          {activeIdentity && (
             <span style={{
-              background: session.isOwner ? "#0ea5e922" : "#1e293b",
-              border: `1px solid ${session.isOwner ? "#0ea5e9" : "#334155"}`,
-              color: session.isOwner ? "#38bdf8" : "#94a3b8",
+              background: `${ROLE_DETAILS[activeIdentity.role].accent}22`,
+              border: `1px solid ${ROLE_DETAILS[activeIdentity.role].accent}55`,
+              color: ROLE_DETAILS[activeIdentity.role].accent,
               fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
             }}>
-              {session.isOwner ? "👑 OWNER" : `@${session.account?.username}`}
+              {activeIdentity.name} · {ROLE_DETAILS[activeIdentity.role].badge}
             </span>
           )}
         </div>
 
-        {/* Tab bar */}
-        <nav aria-label="Studio sections">
-          <div role="tablist" aria-label="Studio sections" style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
-            {TABS.map((t, index) => (
-            <button
-              key={t.id}
-              id={`tab-${t.id}`}
-              role="tab"
-              aria-selected={tab === t.id}
-              aria-controls={`panel-${t.id}`}
-              tabIndex={tab === t.id ? 0 : -1}
-              onClick={() => setTab(t.id)}
-              onKeyDown={(e) => onTabKeyDown(e, index)}
-              style={{
-                padding: "6px 13px", borderRadius: 6, border: "none",
-                cursor: "pointer", fontSize: 11, fontWeight: 600,
-                background: tab === t.id ? "#0ea5e9" : "transparent",
-                color: tab === t.id ? "#fff" : "#64748b",
-                transition: "all 0.2s",
-              }}
-            >
-              {t.icon} {t.label}
-            </button>
-            ))}
-          </div>
-        </nav>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            style={{ padding: "6px 10px", borderRadius: 999, border: `1px solid ${shellPalette.border}`, background: shellPalette.panel, color: shellPalette.text, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
+          >
+            {theme === "dark" ? "☀ Light" : "🌙 Dark"}
+          </button>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            style={{ padding: "6px 10px", borderRadius: 999, border: `1px solid ${shellPalette.border}`, background: shellPalette.panel, color: shellPalette.text, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
+          >
+            Sign out
+          </button>
+          <nav aria-label="Studio sections">
+            <div role="tablist" aria-label="Studio sections" style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+              {TABS.map((t, index) => (
+              <button
+                key={t.id}
+                id={`tab-${t.id}`}
+                role="tab"
+                aria-selected={tab === t.id}
+                aria-controls={`panel-${t.id}`}
+                tabIndex={tab === t.id ? 0 : -1}
+                onClick={() => setTab(t.id)}
+                onKeyDown={(e) => onTabKeyDown(e, index)}
+                style={{
+                  padding: "6px 13px", borderRadius: 6, border: "none",
+                  cursor: "pointer", fontSize: 11, fontWeight: 600,
+                  background: tab === t.id ? shellPalette.accent : "transparent",
+                  color: tab === t.id ? "#fff" : shellPalette.muted,
+                  transition: "all 0.2s",
+                }}
+              >
+                {t.icon} {t.label}
+              </button>
+              ))}
+            </div>
+          </nav>
+        </div>
       </header>
 
       {/* Main content */}
       <main id="main-content" style={{ flex: 1, padding: 24, maxWidth: 1280, width: "100%", margin: "0 auto" }}>
         <section id="panel-control" role="tabpanel" aria-labelledby="tab-control" hidden={tab !== "control"}>
-          {tab === "control" && <ControlTab onNavigate={setTab} />}
+          {tab === "control" && <ControlTab onNavigate={setTab} identity={profile} theme={theme} />}
         </section>
         <section id="panel-video" role="tabpanel" aria-labelledby="tab-video" hidden={tab !== "video"}>
           {tab === "video" && <VideoTab onOpenLumi={openLumi} />}
