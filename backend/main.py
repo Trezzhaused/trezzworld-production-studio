@@ -1637,8 +1637,7 @@ def voice_catalogue():
 @app.get("/api/voice/{audio_id}/download")
 def voice_download(audio_id: str):
     """Download a generated voice file."""
-    _validate_id(audio_id, "audioId")
-    p = _voice_dir() / f"{audio_id}.mp3"
+    p = _safe_export_path(_voice_dir(), audio_id, "mp3", "audioId")
     if not p.exists():
         raise HTTPException(status_code=404, detail="Audio file not found or expired.")
     return FileResponse(path=str(p), media_type="audio/mpeg", filename=f"voice-{audio_id}.mp3")
