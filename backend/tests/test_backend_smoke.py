@@ -14,6 +14,9 @@ import wave
 from io import BytesIO
 from pathlib import Path
 
+from backend.narration_engine import synthesize_narration
+from backend.video_creator import _write_placeholder_mp4
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BASE_URL = "http://127.0.0.1:8765"
@@ -247,6 +250,22 @@ class BackendSmokeTests(unittest.TestCase):
 
         headers, _ = self._request(f"/api/voice/library/assets/{asset_id}/download")
         self.assertIn("audio/wav", headers["content-type"])
+
+    def test_narration_falls_back_to_silent_wav(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "fallback.wav"
+            self.assertTrue(synthesize_narration("Hello world", "en-US-female", output_path))
+            self.assertTrue(output_path.exists())
+            with wave.open(str(output_path), "rb") as wav_file:
+                self.assertEqual(wav_file.getnchannels(), 1)
+                self.assertGreater(wav_file.getnframes(), 0)
+
+    def test_placeholder_mp4_is_written_when_ffmpeg_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "fallback.mp4"
+            self.assertTrue(_write_placeholder_mp4(output_path, "ffmpeg missing"))
+            self.assertTrue(output_path.exists())
+            self.assertTrue(output_path.read_bytes())
 
 
 if __name__ == "__main__":
