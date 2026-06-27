@@ -1,9 +1,9 @@
-from pathlib import Path
 import os
+from pathlib import Path
 import re
 import tempfile
 import uuid
-from fastapi import FastAPI, File, HTTPException, Header, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -11,6 +11,7 @@ from .config import APP_NAME, VERSION
 from .meta_builder import build_meta_builder_status, continue_meta_builder
 from .meta_development import build_meta_development_status
 from .readiness import build_backend_readiness
+from .runtime_config import cors_allowed_origins, media_auth_required, media_owner_required
 from .studio_control_plane import boot_studio_mission, build_studio_control_plane
 from .studio_platform_status import build_studio_platform_status
 
@@ -18,10 +19,30 @@ app = FastAPI(title=f"{APP_NAME} API", version=VERSION)
 
 app.add_middleware(
     CORSMiddleware,
- allow_origins=["*"],
+    allow_origins=cors_allowed_origins(),
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
+
+
+def _resolve_account(authorization: str | None):
+    from .trezzhaus_auth import get_session, read_bearer_token  # noqa: PLC0415
+
+    token = read_bearer_token(authorization)
+    return get_session(token) if token else None
+
+
+def _require_media_access(authorization: str | None):
+    from .trezzhaus_auth import is_owner  # noqa: PLC0415
+
+    if not media_auth_required():
+        return None
+    account = _resolve_account(authorization)
+    if account is None:
+        raise HTTPException(status_code=401, detail="Sign in with your TrezzHaus account to use media generation APIs.")
+    if media_owner_required() and not is_owner(account):
+        raise HTTPException(status_code=403, detail="Only the configured owner account can use this media API.")
+    return account
 
 
 @app.get("/api/status")
@@ -548,12 +569,13 @@ class VideoCreateRequest(BaseModel):
 
 
 @app.post("/api/video/create")
-def video_create(payload: VideoCreateRequest):
+def video_create(payload: VideoCreateRequest, authorization: str | None = Header(default=None)):
     """
     Start an AI-driven video creation job.
     Returns a jobId to poll for status and download the MP4.
     Duration capped at 600 seconds (10 minutes).
     """
+    _require_media_access(authorization)
     from .video_creator import create_video_job  # noqa: PLC0415
     job = create_video_job(
         concept=payload.concept,
@@ -616,12 +638,13 @@ class VideoRerenderRequest(BaseModel):
 
 
 @app.post("/api/video/{job_id}/rerender")
-def video_rerender(job_id: str, payload: VideoRerenderRequest):
+def video_rerender(job_id: str, payload: VideoRerenderRequest, authorization: str | None = Header(default=None)):
     """
     Re-render a video from an edited storyboard (reordered scenes, edited narration/visual
     text, swapped voice or music) without paying for a new AI storyboard call. Omit
     `storyboard` to just change narration/music settings and re-render the same scenes.
     """
+    _require_media_access(authorization)
     from .video_creator import create_rerender_job  # noqa: PLC0415
     job = create_rerender_job(
         source_job_id=job_id,
@@ -640,13 +663,14 @@ class VideoLumiEditRequest(BaseModel):
 
 
 @app.post("/api/video/{job_id}/lumi-edit")
-def video_lumi_edit(job_id: str, payload: VideoLumiEditRequest):
+def video_lumi_edit(job_id: str, payload: VideoLumiEditRequest, authorization: str | None = Header(default=None)):
     """
     Apply a natural-language edit instruction to a video's storyboard via LUMI (e.g.
     "make scene 3 happen at night" or "swap the order of the first two scenes"), then
     re-render. This is REWORK-iT's AI-assisted edit mode, as opposed to manually
     reordering/editing scenes and calling /rerender directly.
     """
+    _require_media_access(authorization)
     from .video_creator import get_video_job, lumi_edit_storyboard, create_rerender_job  # noqa: PLC0415
 
     source = get_video_job(job_id)
@@ -671,8 +695,9 @@ class VideoTrimRequest(BaseModel):
 
 
 @app.post("/api/video/{job_id}/trim")
-def video_trim(job_id: str, payload: VideoTrimRequest):
+def video_trim(job_id: str, payload: VideoTrimRequest, authorization: str | None = Header(default=None)):
     """Trim a completed video to [startSeconds, endSeconds] via a fast stream-copy cut."""
+    _require_media_access(authorization)
     from .video_creator import create_trim_job  # noqa: PLC0415
     if payload.endSeconds <= payload.startSeconds:
         raise HTTPException(status_code=400, detail="endSeconds must be greater than startSeconds.")
@@ -687,8 +712,9 @@ class VideoExportRequest(BaseModel):
 
 
 @app.post("/api/video/{job_id}/export")
-def video_export(job_id: str, payload: VideoExportRequest):
+def video_export(job_id: str, payload: VideoExportRequest, authorization: str | None = Header(default=None)):
     """Re-encode a completed video to a different resolution (e.g. upscale 720p -> 4k)."""
+    _require_media_access(authorization)
     from .video_creator import create_export_job  # noqa: PLC0415
     job = create_export_job(job_id, payload.resolution)
     if job is None:
@@ -709,8 +735,9 @@ class MusicGenerateRequest(BaseModel):
 
 
 @app.post("/api/music/generate")
-def music_generate(payload: MusicGenerateRequest):
+def music_generate(payload: MusicGenerateRequest, authorization: str | None = Header(default=None)):
     """Start a music creation job and return the job metadata."""
+    _require_media_access(authorization)
     from .music_creator import create_music_job  # noqa: PLC0415
     job = create_music_job(
         concept=payload.concept,
@@ -1239,8 +1266,9 @@ class ImageCreateRequest(BaseModel):
 
 
 @app.post("/api/image/create")
-def image_create(payload: ImageCreateRequest):
+def image_create(payload: ImageCreateRequest, authorization: str | None = Header(default=None)):
     """Generate an AI image from a text prompt (uses the same pipeline as Video Studio frames)."""
+    _require_media_access(authorization)
     from .lumi_image_export import has_image_credentials, generate_lumi_image  # noqa: PLC0415
 
     if not has_image_credentials():
@@ -1280,8 +1308,9 @@ def image_create(payload: ImageCreateRequest):
 
 
 @app.post("/api/image/upload")
-async def image_upload(file: UploadFile = File(...)):
+async def image_upload(file: UploadFile = File(...), authorization: str | None = Header(default=None)):
     """Upload an existing image file for editing/touchup in the Image Studio."""
+    _require_media_access(authorization)
     allowed = {"image/png", "image/jpeg", "image/webp", "image/gif"}
     ct = file.content_type or ""
     if ct not in allowed:
@@ -1343,8 +1372,9 @@ class ImageFilterRequest(BaseModel):
 
 
 @app.post("/api/image/filter")
-def image_filter(payload: ImageFilterRequest):
+def image_filter(payload: ImageFilterRequest, authorization: str | None = Header(default=None)):
     """Apply a touchup filter to an existing Image Studio image (sharpen, blur, enhance, resize, grayscale)."""
+    _require_media_access(authorization)
     allowed_ops = {"sharpen", "blur", "enhance", "grayscale", "resize"}
     if payload.operation not in allowed_ops:
         raise HTTPException(status_code=400, detail=f"Unknown operation. Choose from: {sorted(allowed_ops)}")
@@ -1439,7 +1469,8 @@ class DocumentCreateRequest(BaseModel):
 
 
 @app.post("/api/document/create")
-def document_create(payload: DocumentCreateRequest):
+def document_create(payload: DocumentCreateRequest, authorization: str | None = Header(default=None)):
+    _require_media_access(authorization)
     fmt = payload.format.lower().strip()
     document_id = str(uuid.uuid4())
     path = _write_document(document_id, fmt, payload.content)
@@ -1456,7 +1487,8 @@ def document_create(payload: DocumentCreateRequest):
 
 
 @app.post("/api/document/upload")
-async def document_upload(file: UploadFile = File(...)):
+async def document_upload(file: UploadFile = File(...), authorization: str | None = Header(default=None)):
+    _require_media_access(authorization)
     filename = file.filename or "document.txt"
     suffix = Path(filename).suffix.lower().lstrip(".")
     if suffix == "markdown":
@@ -1506,7 +1538,8 @@ class DocumentUpdateRequest(BaseModel):
 
 
 @app.post("/api/document/{document_id}/update")
-def document_update(document_id: str, payload: DocumentUpdateRequest):
+def document_update(document_id: str, payload: DocumentUpdateRequest, authorization: str | None = Header(default=None)):
+    _require_media_access(authorization)
     path, existing_fmt = _document_path(document_id)
     if path is None or existing_fmt is None:
         raise HTTPException(status_code=404, detail="Document not found.")
@@ -1560,11 +1593,12 @@ class VoiceGenerateRequest(BaseModel):
 
 
 @app.post("/api/voice/generate")
-def voice_generate(payload: VoiceGenerateRequest):
+def voice_generate(payload: VoiceGenerateRequest, authorization: str | None = Header(default=None)):
     """
     Generate a text-to-speech audio file using edge-tts (free, no API key needed).
     Returns an audioId to download the MP3/WAV.
     """
+    _require_media_access(authorization)
     from .narration_engine import VOICE_CATALOGUE, synthesize_narration  # noqa: PLC0415
 
     text = payload.text.strip()
@@ -1608,6 +1642,104 @@ def voice_download(audio_id: str):
     if not p.exists():
         raise HTTPException(status_code=404, detail="Audio file not found or expired.")
     return FileResponse(path=str(p), media_type="audio/mpeg", filename=f"voice-{audio_id}.mp3")
+
+
+def _parse_tag_list(raw: str | None) -> list[str]:
+    return [part.strip() for part in (raw or "").split(",") if part.strip()]
+
+
+@app.post("/api/voice/library/import")
+async def voice_library_import(
+    files: list[UploadFile] = File(...),
+    collectionName: str = Form(default=""),
+    tags: str = Form(default=""),
+    authorization: str | None = Header(default=None),
+):
+    """Bulk import voiceover/audio assets into the persistent LUMI creator library."""
+    _require_media_access(authorization)
+    from .voice_library import start_voice_import, validate_voice_upload  # noqa: PLC0415
+
+    if not files:
+        raise HTTPException(status_code=400, detail="Upload at least one audio file.")
+    if len(files) > 1500:
+        raise HTTPException(status_code=413, detail="Too many files — maximum 1500 per import job.")
+
+    prepared: list[dict[str, object]] = []
+    total_size = 0
+    for file in files:
+        filename = file.filename or "voice-asset"
+        data = await file.read()
+        total_size += len(data)
+        if total_size > 2 * 1024 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Import payload too large — maximum 2 GB per job.")
+        ok, extension, error = validate_voice_upload(filename, file.content_type or "", len(data))
+        if not ok or extension is None:
+            raise HTTPException(status_code=400, detail=f"{filename}: {error}")
+        prepared.append(
+            {
+                "filename": filename,
+                "content": data,
+                "content_type": file.content_type or "application/octet-stream",
+                "size_bytes": len(data),
+                "extension": extension,
+            }
+        )
+
+    return start_voice_import(prepared, collection_name=collectionName, tags=_parse_tag_list(tags))
+
+
+@app.get("/api/voice/library/import/{job_id}")
+def voice_library_import_status(job_id: str):
+    from .voice_library import get_voice_import_job  # noqa: PLC0415
+
+    job = get_voice_import_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Voice import job '{job_id}' not found.")
+    return job
+
+
+@app.get("/api/voice/library/assets")
+def voice_library_assets(
+    q: str = Query(default=""),
+    collectionName: str = Query(default=""),
+    tag: str = Query(default=""),
+    page: int = Query(default=1, ge=1),
+    pageSize: int = Query(default=25, ge=1, le=100),
+):
+    from .voice_library import list_voice_assets  # noqa: PLC0415
+
+    return list_voice_assets(
+        page=page,
+        page_size=pageSize,
+        query=q,
+        collection_name=collectionName,
+        tag=tag,
+    )
+
+
+@app.get("/api/voice/library/assets/{asset_id}")
+def voice_library_asset(asset_id: str):
+    from .voice_library import get_voice_asset  # noqa: PLC0415
+
+    asset = get_voice_asset(asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail=f"Voice asset '{asset_id}' not found.")
+    return asset
+
+
+@app.get("/api/voice/library/assets/{asset_id}/download")
+def voice_library_asset_download(asset_id: str):
+    from .voice_library import get_voice_asset, get_voice_asset_path  # noqa: PLC0415
+
+    asset = get_voice_asset(asset_id)
+    path = get_voice_asset_path(asset_id)
+    if asset is None or path is None:
+        raise HTTPException(status_code=404, detail=f"Voice asset '{asset_id}' not found.")
+    return FileResponse(
+        path=str(path),
+        media_type=asset["contentType"],
+        filename=asset["filename"],
+    )
 
 
 # ---------------------------------------------------------------------------

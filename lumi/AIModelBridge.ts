@@ -19,7 +19,12 @@
  *   GET  /api/video/jobs                 — list all video jobs
  */
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = (() => {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin;
+  }
+  return 'http://localhost:8000';
+})();
 
 // ---------------------------------------------------------------------------
 // Shared types

@@ -10,6 +10,14 @@ from pathlib import Path
 from typing import Any
 
 from .mission_store import DATA_DIR, MissionStore, STORE_PATH
+from .runtime_config import (
+    app_trezzhaus_origin,
+    cors_allowed_origins,
+    is_valid_origin,
+    media_auth_required,
+    media_owner_required,
+    studio_public_url,
+)
 from .trezzhaus_auth import AUTH_API_BASE
 from .user_key_store import get_user_key_store
 
@@ -82,6 +90,10 @@ def _document_dir() -> Path:
 
 def _voice_dir() -> Path:
     return Path(os.environ.get("VOICE_EXPORT_DIR", "/tmp/trezzworld/exports/voice"))
+
+
+def _voice_library_dir() -> Path:
+    return Path(os.environ.get("VOICE_LIBRARY_DIR", "/tmp/trezzworld/library/voice"))
 
 
 def _music_archive_dir() -> Path:
@@ -219,6 +231,7 @@ def build_backend_readiness() -> dict[str, Any]:
         ("lumi-tool-exports", "LUMI tool exports", _resolve_lumi_tools_dir()),
         ("document-exports", "Document exports", _document_dir()),
         ("voice-exports", "Voice exports", _voice_dir()),
+        ("voice-library", "Voice library storage", _voice_library_dir()),
     ]
     for check_id, category, path in export_targets:
         ok, detail = _probe_directory(path)
@@ -338,6 +351,71 @@ def build_backend_readiness() -> dict[str, Any]:
         )
     )
 
+    studio_origin = studio_public_url()
+    app_origin = app_trezzhaus_origin()
+    origins_ready = is_valid_origin(studio_origin) and is_valid_origin(app_origin)
+    checks.append(
+        _make_check(
+            check_id="public-origins",
+            category="Routing origins",
+            goal="Studio/app origins valid",
+            ok=origins_ready,
+            detail=(
+                f"Studio origin {studio_origin} and app origin {app_origin} are configured."
+                if origins_ready
+                else f"Invalid STUDIO_PUBLIC_URL ({studio_origin}) or APP_TREZZHAUS_ORIGIN ({app_origin})."
+            ),
+        )
+    )
+
+    allowed_origins = cors_allowed_origins()
+    cors_ready = studio_origin in allowed_origins and app_origin in allowed_origins
+    checks.append(
+        _make_check(
+            check_id="cors-origins",
+            category="Routing security",
+            goal="CORS origins include required hosts",
+            ok=cors_ready,
+            detail=(
+                f"CORS allows studio/app origins: {', '.join(allowed_origins)}."
+                if cors_ready
+                else f"CORS is missing {studio_origin} or {app_origin}; current origins: {', '.join(allowed_origins)}"
+            ),
+        )
+    )
+
+    media_auth_enabled = media_auth_required()
+    checks.append(
+        _make_check(
+            check_id="media-auth",
+            category="Media API protection",
+            goal="Authenticated media writes enforced",
+            ok=media_auth_enabled,
+            detail=(
+                "REQUIRE_MEDIA_AUTH is enabled for media-generation and upload endpoints."
+                if media_auth_enabled
+                else "REQUIRE_MEDIA_AUTH is disabled; media-generation and upload endpoints remain open."
+            ),
+            required=False,
+            warning=not media_auth_enabled,
+        )
+    )
+
+    checks.append(
+        _make_check(
+            check_id="media-owner-mode",
+            category="Media API protection",
+            goal="Optional owner-only enforcement configured",
+            ok=True,
+            detail=(
+                "REQUIRE_MEDIA_OWNER is enabled; only the configured owner can invoke protected media writes."
+                if media_owner_required()
+                else "REQUIRE_MEDIA_OWNER is disabled; any authenticated session can invoke protected media writes."
+            ),
+            required=False,
+        )
+    )
+
     owner_ready = _has_value("OWNER_ACCOUNT_ID")
     checks.append(
         _make_check(
@@ -393,6 +471,12 @@ def build_integration_services() -> list[dict[str, Any]]:
             "detail": f"Using auth base {AUTH_API_BASE}." if AUTH_API_BASE else "Set TREZZHAUS_AUTH_API_BASE.",
         },
         {
+            "id": "routing-origins",
+            "label": "Studio routing origins",
+            "status": "ready" if is_valid_origin(studio_public_url()) and is_valid_origin(app_trezzhaus_origin()) else "needs-config",
+            "detail": f"Studio={studio_public_url()} | App={app_trezzhaus_origin()}",
+        },
+        {
             "id": "lumi-openrouter",
             "label": "LUMI / AI routing",
             "status": "ready" if ai_ready else "needs-config",
@@ -421,6 +505,16 @@ def build_integration_services() -> list[dict[str, Any]]:
             "label": "Persistent DATA_DIR",
             "status": "ready" if persistence_ready else "partial",
             "detail": f"DATA_DIR points to {os.environ.get('DATA_DIR')}." if persistence_ready else "Set DATA_DIR to a mounted persistent volume for deploys.",
+        },
+        {
+            "id": "media-auth",
+            "label": "Protected media writes",
+            "status": "ready" if media_auth_required() else "partial",
+            "detail": (
+                "Protected media routes require an authenticated TrezzHaus session."
+                if media_auth_required()
+                else "Set REQUIRE_MEDIA_AUTH=true to require TrezzHaus sign-in for media generation and uploads."
+            ),
         },
         {
             "id": "owner-mode",
