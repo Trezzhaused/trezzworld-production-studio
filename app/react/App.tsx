@@ -1786,7 +1786,7 @@ function RobloxTab() {
           <select value={genre} onChange={(e) => setGenre(e.target.value)} style={pillStyle}>
             {ROBLOX_GENRES.map((g) => <option key={g} value={g}>{g}</option>)}
           </select>
-          <input type="number" value={maxPlayers} min={2} max={100} onChange={(e) => setMaxPlayers(parseInt(e.target.value) || 20)} aria-label="Maximum players" title="Max players" style={{ ...pillStyle, width: 70 }} />
+          <input type="number" value={maxPlayers} min={2} max={100} onChange={(e) => setMaxPlayers(parseInt(e.target.value) || 20)} aria-label="Maximum players" title="Maximum players" style={{ ...pillStyle, width: 70 }} />
           <select value={monetization} onChange={(e) => setMonetization(e.target.value)} style={pillStyle}>
             {ROBLOX_MONETIZATION.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
@@ -2290,10 +2290,12 @@ function ImageTab({ onOpenLumi }: { onOpenLumi: (payload: LumiDraftPayload) => v
               <span style={{ color: "#64748b", fontSize: 11 }}>📐 Resize to</span>
               <input type="number" value={resizeW} min={64} max={4096}
                 onChange={(e) => setResizeW(parseInt(e.target.value) || 800)}
+                aria-label="Resize width in pixels"
                 style={{ ...inputStyle, width: 70 }} />
               <span style={{ color: "#475569", fontSize: 11 }}>×</span>
               <input type="number" value={resizeH} min={64} max={4096}
                 onChange={(e) => setResizeH(parseInt(e.target.value) || 600)}
+                aria-label="Resize height in pixels"
                 style={{ ...inputStyle, width: 70 }} />
               <button onClick={() => applyFilter("resize")} disabled={filtering !== null} style={btnStyle(filtering === null)}>
                 {filtering === "resize" ? "⏳..." : "Apply"}
