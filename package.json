@@ -12,10 +12,11 @@
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.node.json",
     "dist": "npm run build && electron-builder",
-    "backend:dev": "python -m uvicorn backend.main:app --reload --port 8000",
+    "backend:install": "python -m pip install --disable-pip-version-check -r backend/requirements.txt",
+    "backend:dev": "npm run backend:install && python -m uvicorn backend.main:app --reload --port 8000",
     "dev:web": "vite",
     "build:web": "vite build",
-    "test:backend": "python -m unittest discover -s backend/tests -p \"test_*.py\"",
+    "test:backend": "npm run backend:install && python -m unittest discover -s backend/tests -p \"test_*.py\"",
     "test": "npm run test:backend"
   },
   "dependencies": {
