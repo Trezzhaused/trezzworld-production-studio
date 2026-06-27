@@ -2872,6 +2872,10 @@ function ControlTab({ onNavigate, identity, theme }: { onNavigate: (tab: Tab) =>
   const heroText = isLight ? "#0f172a" : "#e2e8f0";
   const heroMuted = isLight ? "#475569" : "#64748b";
   const heroGlow = isLight ? "rgba(14,165,233,0.16)" : "rgba(2,6,23,0.46)";
+  const panelSurface = isLight ? "rgba(255,255,255,0.9)" : "rgba(10, 15, 26, 0.9)";
+  const panelSoft = isLight ? "rgba(248,250,252,0.95)" : "rgba(15, 23, 42, 0.72)";
+  const panelBorder = isLight ? "rgba(14,165,233,0.16)" : "rgba(56,189,248,0.24)";
+  const panelShadow = isLight ? "0 18px 45px rgba(14,165,233,0.08)" : "0 18px 45px rgba(2,6,23,0.26)";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -2996,15 +3000,57 @@ function ControlTab({ onNavigate, identity, theme }: { onNavigate: (tab: Tab) =>
         )}
       </div>
 
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 16 }}>
+        {[
+          {
+            title: "LUMI copilot",
+            caption: identity?.role === "admin"
+              ? "Unlimited orchestration and model staging for high-velocity creative runs."
+              : identity?.role === "dev"
+                ? "Preview drafts, tune prompts, and iterate inside the studio with guardrails."
+                : "Stay in a policy-aware sandbox while exploring ideas safely.",
+            accent: "#38bdf8",
+          },
+          {
+            title: "Quality gates",
+            caption: "Role-aware access, compliance-safe prompts, and instant previews keep the studio polished.",
+            accent: "#a78bfa",
+          },
+          {
+            title: "Mission launcher",
+            caption: "Send a prompt to boot a full creative mission and keep the control plane in motion.",
+            accent: "#22c55e",
+          },
+        ].map((tile) => (
+          <div key={tile.title} style={{
+            background: panelSurface,
+            border: `1px solid ${panelBorder}`,
+            borderRadius: 14,
+            padding: 14,
+            boxShadow: panelShadow,
+          }}>
+            <div style={{ color: tile.accent, fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>
+              {tile.title}
+            </div>
+            <div style={{ color: heroText, fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
+              {tile.title}
+            </div>
+            <div style={{ color: heroMuted, fontSize: 12, lineHeight: 1.5 }}>
+              {tile.caption}
+            </div>
+          </div>
+        ))}
+      </div>
+
       <BabylonScenePanel />
  
       {platformStatus && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 10 }}>
-          <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 16 }}>
+          <div style={{ background: panelSurface, border: `1px solid ${panelBorder}`, borderRadius: 10, padding: 16, boxShadow: panelShadow }}>
             <div style={{ color: "#38bdf8", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 8 }}>
               ACCESSIBILITY
             </div>
-            <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.6, marginBottom: 10 }}>
+            <div style={{ color: heroMuted, fontSize: 12, lineHeight: 1.6, marginBottom: 10 }}>
               {platformStatus.accessibility?.summary}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -3019,7 +3065,7 @@ function ControlTab({ onNavigate, identity, theme }: { onNavigate: (tab: Tab) =>
             </div>
           </div>
 
-          <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 16 }}>
+          <div style={{ background: panelSurface, border: `1px solid ${panelBorder}`, borderRadius: 10, padding: 16, boxShadow: panelShadow }}>
             <div style={{ color: "#a78bfa", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 8 }}>
               INTEGRATIONS
             </div>
@@ -3038,14 +3084,14 @@ function ControlTab({ onNavigate, identity, theme }: { onNavigate: (tab: Tab) =>
             </div>
           </div>
 
-          <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 16 }}>
+          <div style={{ background: panelSurface, border: `1px solid ${panelBorder}`, borderRadius: 10, padding: 16, boxShadow: panelShadow }}>
             <div style={{ color: "#fbbf24", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 8 }}>
               SAFETY
             </div>
-            <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.6, marginBottom: 10 }}>
+            <div style={{ color: heroMuted, fontSize: 12, lineHeight: 1.6, marginBottom: 10 }}>
               {platformStatus.safety?.summary}
             </div>
-            <ul style={{ margin: 0, paddingLeft: 18, color: "#cbd5e1", fontSize: 12, lineHeight: 1.6 }}>
+            <ul style={{ margin: 0, paddingLeft: 18, color: heroText, fontSize: 12, lineHeight: 1.6 }}>
               {(platformStatus.safety?.guidelines ?? []).map((item: string) => (
                 <li key={item}>{item}</li>
               ))}
@@ -3064,21 +3110,28 @@ function ControlTab({ onNavigate, identity, theme }: { onNavigate: (tab: Tab) =>
               type="button"
               onClick={() => onNavigate(mod.id as Tab)}
               style={{
-                background: "#0a0f1a",
+                background: panelSurface,
                 border: `1px solid ${mod.color}33`,
                 borderRadius: 10, padding: 16, cursor: "pointer",
-                transition: "border-color 0.2s",
+                transition: "border-color 0.2s, transform 0.2s",
                 textAlign: "left",
                 fontFamily: "inherit",
+                boxShadow: panelShadow,
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.borderColor = mod.color + "88")}
-              onMouseLeave={(e) => (e.currentTarget.style.borderColor = mod.color + "33")}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = mod.color + "88";
+                e.currentTarget.style.transform = "translateY(-2px)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = mod.color + "33";
+                e.currentTarget.style.transform = "translateY(0)";
+              }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
                 <span style={{ fontSize: 22 }}>{mod.icon}</span>
-                <span style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 700 }}>{mod.label}</span>
+                <span style={{ color: heroText, fontSize: 14, fontWeight: 700 }}>{mod.label}</span>
               </div>
-              <div style={{ color: "#64748b", fontSize: 12, lineHeight: 1.5 }}>{mod.desc}</div>
+              <div style={{ color: heroMuted, fontSize: 12, lineHeight: 1.5 }}>{mod.desc}</div>
               <div style={{ marginTop: 10 }}>
                 <span style={{ color: mod.color, fontSize: 11, fontWeight: 600 }}>Open →</span>
               </div>
@@ -3096,12 +3149,13 @@ function ControlTab({ onNavigate, identity, theme }: { onNavigate: (tab: Tab) =>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 6 }}>
             {cpData.capabilityProviders.map((p: any) => (
               <div key={p.capability} style={{
-                background: "#0a0f1a",
-                border: `1px solid ${p.status === "ready" ? "#22c55e33" : p.status === "standby" ? "#f59e0b33" : "#1e3a5f"}`,
+                background: panelSurface,
+                border: `1px solid ${p.status === "ready" ? "#22c55e33" : p.status === "standby" ? "#f59e0b33" : panelBorder}`,
                 borderRadius: 8, padding: "10px 14px",
+                boxShadow: panelShadow,
               }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
-                  <span style={{ color: "#94a3b8", fontSize: 12, fontWeight: 600 }}>{p.capability}</span>
+                  <span style={{ color: heroText, fontSize: 12, fontWeight: 600 }}>{p.capability}</span>
                   <span style={{
                     fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 8,
                     background: p.status === "ready" ? "#22c55e22" : p.status === "standby" ? "#f59e0b22" : "#1e3a5f",
@@ -3110,7 +3164,7 @@ function ControlTab({ onNavigate, identity, theme }: { onNavigate: (tab: Tab) =>
                     {p.status}
                   </span>
                 </div>
-                <div style={{ color: "#475569", fontSize: 11 }}>{p.providerId}</div>
+                <div style={{ color: heroMuted, fontSize: 11 }}>{p.providerId}</div>
               </div>
             ))}
           </div>
@@ -3128,15 +3182,16 @@ function ControlTab({ onNavigate, identity, theme }: { onNavigate: (tab: Tab) =>
               const available = val === true || val?.available === true;
               return (
                 <div key={key} style={{
-                  background: "#0a0f1a",
-                  border: `1px solid ${available ? "#22c55e33" : "#1e3a5f"}`,
+                  background: panelSurface,
+                  border: `1px solid ${available ? "#22c55e33" : panelBorder}`,
                   borderRadius: 8, padding: "8px 14px",
                   display: "flex", alignItems: "center", gap: 6,
+                  boxShadow: panelShadow,
                 }}>
-                  <span style={{ color: available ? "#22c55e" : "#475569", fontSize: 11 }}>
+                  <span style={{ color: available ? "#22c55e" : heroMuted, fontSize: 11 }}>
                     {available ? "✓" : "✗"}
                   </span>
-                  <span style={{ color: available ? "#94a3b8" : "#475569", fontSize: 12 }}>
+                  <span style={{ color: available ? heroText : heroMuted, fontSize: 12 }}>
                     {key}
                   </span>
                 </div>
@@ -3324,60 +3379,114 @@ export default function App() {
             </button>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 22 }}>
-            {(["admin", "dev", "user"] as StudioRole[]).map((role) => {
-              const details = ROLE_DETAILS[role];
-              const selected = draftRole === role;
-              return (
-                <button
-                  key={role}
-                  type="button"
-                  onClick={() => setDraftRole(role)}
-                  style={{
-                    textAlign: "left",
-                    padding: 14,
-                    borderRadius: 14,
-                    border: selected ? `2px solid ${details.accent}` : `1px solid ${shellPalette.border}`,
-                    background: selected ? `${details.accent}16` : shellPalette.panel,
-                    color: shellPalette.text,
-                    cursor: "pointer",
-                    boxShadow: selected ? `0 16px 40px ${details.accent}22` : "none",
-                  }}
-                >
-                  <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>{details.badge}</div>
-                  <div style={{ fontSize: 12, color: shellPalette.muted, lineHeight: 1.5 }}>{details.summary}</div>
-                </button>
-              );
-            })}
-          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1.15fr 0.85fr", gap: 18, alignItems: "start" }}>
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 18 }}>
+                {(["admin", "dev", "user"] as StudioRole[]).map((role) => {
+                  const details = ROLE_DETAILS[role];
+                  const selected = draftRole === role;
+                  return (
+                    <button
+                      key={role}
+                      type="button"
+                      onClick={() => setDraftRole(role)}
+                      style={{
+                        textAlign: "left",
+                        padding: 14,
+                        borderRadius: 14,
+                        border: selected ? `2px solid ${details.accent}` : `1px solid ${shellPalette.border}`,
+                        background: selected ? `${details.accent}16` : shellPalette.panel,
+                        color: shellPalette.text,
+                        cursor: "pointer",
+                        boxShadow: selected ? `0 16px 40px ${details.accent}22` : "none",
+                      }}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>{details.badge}</div>
+                      <div style={{ fontSize: 12, color: shellPalette.muted, lineHeight: 1.5 }}>{details.summary}</div>
+                    </button>
+                  );
+                })}
+              </div>
 
-          <form onSubmit={handleSignIn} style={{ display: "grid", gap: 12, maxWidth: 480 }}>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: shellPalette.muted }}>Display name</span>
-              <input
-                value={draftName}
-                onChange={(e) => setDraftName(e.target.value)}
-                placeholder="Enter your name or alias"
-                style={{ ...inputStyle, background: theme === "dark" ? "#0f172a" : "#f8fafc", color: shellPalette.text }}
-              />
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: shellPalette.muted }}>Workspace role</span>
-              <select
-                value={draftRole}
-                onChange={(e) => setDraftRole(e.target.value as StudioRole)}
-                style={{ ...inputStyle, background: theme === "dark" ? "#0f172a" : "#f8fafc", color: shellPalette.text }}
-              >
-                <option value="admin">Admin</option>
-                <option value="dev">Dev</option>
-                <option value="user">User</option>
-              </select>
-            </label>
-            {authMessage ? <div style={{ color: "#f59e0b", fontSize: 12, fontWeight: 600 }}>{authMessage}</div> : null}
-            <button type="submit" style={{ ...btnStyle(true), padding: "12px 16px", fontWeight: 700, maxWidth: 220 }}>
-              Enter Studio
-            </button>
-          </form>
+              <form onSubmit={handleSignIn} style={{ display: "grid", gap: 12, maxWidth: 480 }}>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: shellPalette.muted }}>Display name</span>
+                  <input
+                    value={draftName}
+                    onChange={(e) => setDraftName(e.target.value)}
+                    placeholder="Enter your name or alias"
+                    style={{ ...inputStyle, background: theme === "dark" ? "#0f172a" : "#f8fafc", color: shellPalette.text }}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: shellPalette.muted }}>Workspace role</span>
+                  <select
+                    value={draftRole}
+                    onChange={(e) => setDraftRole(e.target.value as StudioRole)}
+                    style={{ ...inputStyle, background: theme === "dark" ? "#0f172a" : "#f8fafc", color: shellPalette.text }}
+                  >
+                    <option value="admin">Admin</option>
+                    <option value="dev">Dev</option>
+                    <option value="user">User</option>
+                  </select>
+                </label>
+                {authMessage ? <div style={{ color: "#f59e0b", fontSize: 12, fontWeight: 600 }}>{authMessage}</div> : null}
+                <button type="submit" style={{ ...btnStyle(true), padding: "12px 16px", fontWeight: 700, maxWidth: 220 }}>
+                  Enter Studio
+                </button>
+              </form>
+            </div>
+
+            <div style={{
+              background: theme === "dark"
+                ? "linear-gradient(145deg, rgba(14,165,233,0.16), rgba(15,23,42,0.96))"
+                : "linear-gradient(145deg, rgba(14,165,233,0.12), rgba(255,255,255,0.96))",
+              border: `1px solid ${shellPalette.border}`,
+              borderRadius: 20,
+              padding: 18,
+              boxShadow: theme === "dark" ? "0 20px 60px rgba(2,6,23,0.35)" : "0 20px 60px rgba(14,165,233,0.12)",
+            }}>
+              <div style={{ color: shellPalette.accent, fontSize: 11, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>
+                Studio preview
+              </div>
+              <div style={{ color: shellPalette.text, fontSize: 16, fontWeight: 800, marginBottom: 8 }}>
+                Future-ready workspace, tuned for creators.
+              </div>
+              <div style={{ color: shellPalette.muted, fontSize: 12, lineHeight: 1.6, marginBottom: 14 }}>
+                Admins get orchestration breadth, Devs get near-limitless preview/editing, and users stay inside a safety-aware experience that feels premium from the first click.
+              </div>
+              <div style={{ display: "grid", gap: 8 }}>
+                {[
+                  {
+                    label: "Role-aware access",
+                    detail: draftRole === "admin"
+                      ? "Unlimited orchestration and code-level control."
+                      : draftRole === "dev"
+                        ? "Near-limitless preview and editing depth."
+                        : "Policy-safe prompts and guided workflows.",
+                  },
+                  {
+                    label: "Studio modules",
+                    detail: "Video, music, voice, docs, Roblox, and LUMI all live in one shell.",
+                  },
+                  {
+                    label: "Light / dark mode",
+                    detail: theme === "dark" ? "Dark mode keeps the canvas immersive." : "Light mode keeps text and panels crisp and readable.",
+                  },
+                ].map((item) => (
+                  <div key={item.label} style={{
+                    background: theme === "dark" ? "rgba(15, 23, 42, 0.7)" : "rgba(255,255,255,0.72)",
+                    borderRadius: 12,
+                    padding: "10px 12px",
+                    border: `1px solid ${shellPalette.border}`,
+                  }}>
+                    <div style={{ color: shellPalette.text, fontSize: 12, fontWeight: 700 }}>{item.label}</div>
+                    <div style={{ color: shellPalette.muted, fontSize: 11, marginTop: 2 }}>{item.detail}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     );
