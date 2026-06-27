@@ -164,6 +164,20 @@ class BackendSmokeTests(unittest.TestCase):
         self.assertIn("integrations", payload)
         self.assertTrue(payload["integrations"]["services"])
 
+    def test_three_d_asset_manifest_is_available(self) -> None:
+        payload = self._get_json("/api/3d/asset-manifest")
+        self.assertEqual(payload["engine"], "babylonjs")
+        self.assertIn("assetCategories", payload)
+        self.assertTrue(payload["assetCategories"])
+        category_ids = {category["id"] for category in payload["assetCategories"]}
+        self.assertIn("main-hero", category_ids)
+        self.assertIn("environment-kit", category_ids)
+        self.assertIn("ui-hud", category_ids)
+        hero = next(category for category in payload["assetCategories"] if category["id"] == "main-hero")
+        self.assertIn("reviewCandidates", hero)
+        self.assertTrue(hero["reviewCandidates"])
+        self.assertEqual(hero["recommendedAsset"]["license"], "CC0")
+
     def test_document_roundtrip(self) -> None:
         created = self._post_json(
             "/api/document/create",
