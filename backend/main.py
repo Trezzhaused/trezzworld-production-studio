@@ -14,6 +14,7 @@ from .readiness import build_backend_readiness
 from .runtime_config import cors_allowed_origins, media_auth_required, media_owner_required
 from .studio_control_plane import boot_studio_mission, build_studio_control_plane
 from .studio_platform_status import build_studio_platform_status
+from .three_d_assets import build_three_d_asset_manifest
 
 app = FastAPI(title=f"{APP_NAME} API", version=VERSION)
 
@@ -61,6 +62,10 @@ def status():
 @app.get("/api/health/readiness")
 def health_readiness():
     return build_backend_readiness()
+
+@app.get("/api/3d/asset-manifest")
+def three_d_asset_manifest():
+    return build_three_d_asset_manifest()
 
 @app.get("/api/debug/ffmpeg")
 def debug_ffmpeg():

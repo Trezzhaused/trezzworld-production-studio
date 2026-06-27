@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import BabylonScenePanel from "./BabylonScenePanel";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -2851,6 +2852,8 @@ function ControlTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
         )}
       </div>
 
+      <BabylonScenePanel />
+ 
       {platformStatus && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 10 }}>
           <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 16 }}>
