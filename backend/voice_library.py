@@ -17,7 +17,7 @@ from .mission_store import DATA_DIR
 _DB_PATH = DATA_DIR / "voice_library.sqlite"
 _LIBRARY_DIR = Path(os.environ.get("VOICE_LIBRARY_DIR", "/tmp/trezzworld/library/voice"))
 _STAGING_ROOT = Path(tempfile.gettempdir()) / "trezzworld" / "voice-imports"
-_LOCK = threading.Lock()
+_LOCK = threading.RLock()
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS voice_assets (
@@ -126,18 +126,19 @@ def _normalize_tags(tags: list[str] | None) -> list[str]:
 
 
 def _job_summary(job_id: str) -> dict[str, Any] | None:
-    row = _CONN.execute(
-        "SELECT * FROM voice_import_jobs WHERE job_id = ?",
-        (job_id,),
-    ).fetchone()
-    if row is None:
-        return None
-    items = _CONN.execute(
-        "SELECT item_index, original_filename, asset_id, status, detail, size_bytes, checksum "
-        "FROM voice_import_job_items WHERE job_id = ? ORDER BY item_index ASC",
-        (job_id,),
-    ).fetchall()
-    return {
+    with _LOCK:
+        row = _CONN.execute(
+            "SELECT * FROM voice_import_jobs WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        items = _CONN.execute(
+            "SELECT item_index, original_filename, asset_id, status, detail, size_bytes, checksum "
+            "FROM voice_import_job_items WHERE job_id = ? ORDER BY item_index ASC",
+            (job_id,),
+        ).fetchall()
+        return {
         "jobId": row["job_id"],
         "status": row["status"],
         "totalFiles": row["total_files"],
@@ -199,27 +200,28 @@ def _update_job_counts(
     failed_inc: int = 0,
     error: str | None = None,
 ) -> None:
-    row = _CONN.execute(
-        "SELECT processed_files, imported_files, duplicate_files, failed_files, error FROM voice_import_jobs WHERE job_id = ?",
-        (job_id,),
-    ).fetchone()
-    if row is None:
-        return
-    _CONN.execute(
-        "UPDATE voice_import_jobs SET status = ?, processed_files = ?, imported_files = ?, duplicate_files = ?, "
-        "failed_files = ?, error = ?, updated_at = ? WHERE job_id = ?",
-        (
-            status or _job_summary(job_id)["status"],
-            row["processed_files"] + processed_inc,
-            row["imported_files"] + imported_inc,
-            row["duplicate_files"] + duplicate_inc,
-            row["failed_files"] + failed_inc,
-            error or row["error"],
-            time.time(),
-            job_id,
-        ),
-    )
-    _CONN.commit()
+    with _LOCK:
+        row = _CONN.execute(
+            "SELECT processed_files, imported_files, duplicate_files, failed_files, error, status FROM voice_import_jobs WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if row is None:
+            return
+        _CONN.execute(
+            "UPDATE voice_import_jobs SET status = ?, processed_files = ?, imported_files = ?, duplicate_files = ?, "
+            "failed_files = ?, error = ?, updated_at = ? WHERE job_id = ?",
+            (
+                status or row["status"],
+                row["processed_files"] + processed_inc,
+                row["imported_files"] + imported_inc,
+                row["duplicate_files"] + duplicate_inc,
+                row["failed_files"] + failed_inc,
+                error or row["error"],
+                time.time(),
+                job_id,
+            ),
+        )
+        _CONN.commit()
 
 
 def _process_import_job(
@@ -237,16 +239,18 @@ def _process_import_job(
             try:
                 data = stage_path.read_bytes()
                 checksum = hashlib.sha256(data).hexdigest()
-                existing = _CONN.execute(
-                    "SELECT asset_id FROM voice_assets WHERE checksum = ?",
-                    (checksum,),
-                ).fetchone()
+                with _LOCK:
+                    existing = _CONN.execute(
+                        "SELECT asset_id FROM voice_assets WHERE checksum = ?",
+                        (checksum,),
+                    ).fetchone()
                 if existing is not None:
-                    _CONN.execute(
-                        "UPDATE voice_import_job_items SET status = ?, detail = ?, checksum = ? WHERE job_id = ? AND item_index = ?",
-                        ("duplicate", f"Already imported as {existing['asset_id']}", checksum, job_id, item["index"]),
-                    )
-                    _CONN.commit()
+                    with _LOCK:
+                        _CONN.execute(
+                            "UPDATE voice_import_job_items SET status = ?, detail = ?, checksum = ? WHERE job_id = ? AND item_index = ?",
+                            ("duplicate", f"Already imported as {existing['asset_id']}", checksum, job_id, item["index"]),
+                        )
+                        _CONN.commit()
                     _update_job_counts(job_id, processed_inc=1, duplicate_inc=1)
                     continue
 
@@ -256,38 +260,40 @@ def _process_import_job(
                 shutil.move(str(stage_path), str(final_path))
                 imported_at = time.time()
                 title = Path(item["original_filename"]).stem.replace("_", " ").replace("-", " ").strip() or "Voice Asset"
-                _CONN.execute(
-                    "INSERT INTO voice_assets (asset_id, checksum, filename, original_filename, title, collection_name, tags_json, "
-                    "content_type, extension, size_bytes, storage_path, source, imported_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        asset_id,
-                        checksum,
-                        final_path.name,
-                        item["original_filename"],
-                        title[:120],
-                        collection_name,
-                        json.dumps(tags),
-                        item["content_type"],
-                        extension,
-                        item["size_bytes"],
-                        str(final_path),
-                        source,
-                        imported_at,
-                    ),
-                )
-                _CONN.execute(
-                    "UPDATE voice_import_job_items SET status = ?, detail = ?, asset_id = ?, checksum = ? WHERE job_id = ? AND item_index = ?",
-                    ("imported", "Imported successfully.", asset_id, checksum, job_id, item["index"]),
-                )
-                _CONN.commit()
+                with _LOCK:
+                    _CONN.execute(
+                        "INSERT INTO voice_assets (asset_id, checksum, filename, original_filename, title, collection_name, tags_json, "
+                        "content_type, extension, size_bytes, storage_path, source, imported_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            asset_id,
+                            checksum,
+                            final_path.name,
+                            item["original_filename"],
+                            title[:120],
+                            collection_name,
+                            json.dumps(tags),
+                            item["content_type"],
+                            extension,
+                            item["size_bytes"],
+                            str(final_path),
+                            source,
+                            imported_at,
+                        ),
+                    )
+                    _CONN.execute(
+                        "UPDATE voice_import_job_items SET status = ?, detail = ?, asset_id = ?, checksum = ? WHERE job_id = ? AND item_index = ?",
+                        ("imported", "Imported successfully.", asset_id, checksum, job_id, item["index"]),
+                    )
+                    _CONN.commit()
                 _update_job_counts(job_id, processed_inc=1, imported_inc=1)
             except Exception as exc:  # noqa: BLE001
-                _CONN.execute(
-                    "UPDATE voice_import_job_items SET status = ?, detail = ? WHERE job_id = ? AND item_index = ?",
-                    ("failed", str(exc)[:300], job_id, item["index"]),
-                )
-                _CONN.commit()
+                with _LOCK:
+                    _CONN.execute(
+                        "UPDATE voice_import_job_items SET status = ?, detail = ? WHERE job_id = ? AND item_index = ?",
+                        ("failed", str(exc)[:300], job_id, item["index"]),
+                    )
+                    _CONN.commit()
                 _update_job_counts(job_id, processed_inc=1, failed_inc=1)
         final = _job_summary(job_id)
         if final is not None:
@@ -406,18 +412,19 @@ def list_voice_assets(
         clauses.append("LOWER(tags_json) LIKE ?")
         params.append(f"%\"{tag.strip().lower()}\"%")
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    count_row = _CONN.execute(
-        f"SELECT COUNT(*) AS total FROM voice_assets {where}",
-        params,
-    ).fetchone()
-    total = int(count_row["total"]) if count_row is not None else 0
-    rows = _CONN.execute(
-        f"SELECT * FROM voice_assets {where} ORDER BY imported_at DESC LIMIT ? OFFSET ?",
-        [*params, page_size, (page - 1) * page_size],
-    ).fetchall()
-    collections = _CONN.execute(
-        "SELECT collection_name, COUNT(*) AS total FROM voice_assets WHERE collection_name != '' GROUP BY collection_name ORDER BY collection_name ASC"
-    ).fetchall()
+    with _LOCK:
+        count_row = _CONN.execute(
+            f"SELECT COUNT(*) AS total FROM voice_assets {where}",
+            params,
+        ).fetchone()
+        total = int(count_row["total"]) if count_row is not None else 0
+        rows = _CONN.execute(
+            f"SELECT * FROM voice_assets {where} ORDER BY imported_at DESC LIMIT ? OFFSET ?",
+            [*params, page_size, (page - 1) * page_size],
+        ).fetchall()
+        collections = _CONN.execute(
+            "SELECT collection_name, COUNT(*) AS total FROM voice_assets WHERE collection_name != '' GROUP BY collection_name ORDER BY collection_name ASC"
+        ).fetchall()
     return {
         "items": [_asset_summary(row) for row in rows],
         "page": page,
@@ -429,12 +436,14 @@ def list_voice_assets(
 
 
 def get_voice_asset(asset_id: str) -> dict[str, Any] | None:
-    row = _CONN.execute("SELECT * FROM voice_assets WHERE asset_id = ?", (asset_id,)).fetchone()
+    with _LOCK:
+        row = _CONN.execute("SELECT * FROM voice_assets WHERE asset_id = ?", (asset_id,)).fetchone()
     return _asset_summary(row) if row is not None else None
 
 
 def get_voice_asset_path(asset_id: str) -> Path | None:
-    row = _CONN.execute("SELECT storage_path FROM voice_assets WHERE asset_id = ?", (asset_id,)).fetchone()
+    with _LOCK:
+        row = _CONN.execute("SELECT storage_path FROM voice_assets WHERE asset_id = ?", (asset_id,)).fetchone()
     if row is None:
         return None
     path = Path(row["storage_path"])
