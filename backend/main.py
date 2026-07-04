@@ -1221,13 +1221,17 @@ def roblox_auto_monetization(job_id: str, payload: RobloxAutoMonetizationRequest
     job = get_roblox_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"Roblox job '{job_id}' not found.")
-    return create_monetization_assets(
-        job,
-        api_key=payload.apiKey,
-        universe_id=payload.universeId,
-        place_id=payload.placeId,
-        cohort=payload.cohort,
-    )
+
+    try:
+        return create_monetization_assets(
+            job,
+            api_key=payload.apiKey,
+            universe_id=payload.universeId,
+            place_id=payload.placeId,
+            cohort=payload.cohort,
+        )
+    except Exception:
+        raise HTTPException(status_code=502, detail="Monetization asset creation failed.")
 
 
 @app.post("/api/roblox/analytics")
