@@ -1388,7 +1388,7 @@ const ROBLOX_TEMPLATES = [
     title: "Simulator",
     genre: "Simulator",
     monetization: "ad-supported",
-    prompt: "A relaxing simulator where players collect magical pets, decorate a floating island, and unlock rare rarities.",
+    prompt: "A relaxing simulator where players collect magical pets, decorate a floating island, and unlock rare rewards.",
   },
   {
     id: "horror",
@@ -1398,6 +1398,8 @@ const ROBLOX_TEMPLATES = [
     prompt: "A spooky multiplayer horror experience where players solve environmental puzzles while dodging a mysterious entity.",
   },
 ] as const;
+
+const DEFAULT_TEMPLATE_ID = ROBLOX_TEMPLATES[0].id;
 
 // Steps Lumi/Luau genuinely cannot do via any Roblox API — confirmed via Roblox's
 // own Open Cloud docs (no API exists for these; they require the Roblox website/Studio).
@@ -1592,7 +1594,7 @@ function RobloxTab() {
   const [selectedJob, setSelectedJob] = useState<RobloxJob | null>(null);
   const [oauthStatus, setOauthStatus] = useState<{ connected: boolean; user?: any }>({ connected: false });
   const [lookingUpUniverse, setLookingUpUniverse] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState("tycoon");
+  const [selectedTemplate, setSelectedTemplate] = useState(DEFAULT_TEMPLATE_ID);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const lookupUniverseFromPlace = async (rawPlaceId: string) => {
@@ -1690,7 +1692,7 @@ function RobloxTab() {
         <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
           <div style={{ maxWidth: 620 }}>
             <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.24em", textTransform: "uppercase", opacity: 0.9 }}>
-              AI Roblox Studio
+              AI-Powered Creator Studio
             </div>
             <div style={{ fontSize: 34, fontWeight: 800, lineHeight: 1.05, marginTop: 8 }}>
               Build your next hit experience with a prompt and a few smart choices.
@@ -1699,10 +1701,15 @@ function RobloxTab() {
               Describe the vibe, pick a template, connect your experience IDs, and let the studio generate the core systems and launch-ready structure.
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
-              <button onClick={() => document.getElementById("roblox-creator-form")?.scrollIntoView({ behavior: "smooth", block: "start" })} style={{ ...btnStyle(true), background: "#fff", color: "#111827", padding: "10px 16px" }}>
+              <button
+                type="button"
+                aria-label="Start building your Roblox experience"
+                onClick={() => document.getElementById("roblox-creator-form")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                style={{ ...btnStyle(true), background: "#fff", color: "#111827", padding: "10px 16px" }}
+              >
                 ✨ Start building
               </button>
-              <div style={{ ...btnStyle(true), background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)" }}>
+              <div role="status" aria-live="polite" style={{ ...btnStyle(true), cursor: "default", background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)" }}>
                 ⚡ Prompt → Generate → Publish
               </div>
             </div>
@@ -1725,7 +1732,7 @@ function RobloxTab() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "1.5fr 0.85fr", alignItems: "start" }}>
+      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", alignItems: "start" }}>
         <div id="roblox-creator-form" style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 18, padding: 18 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
             <div>
@@ -1739,7 +1746,7 @@ function RobloxTab() {
             value={concept}
             onChange={(e) => setConcept(e.target.value)}
             placeholder='Describe your game... (e.g., "A tycoon where players build and manage a pizza shop")'
-            rows={4}
+            rows={3}
             style={{ ...inputStyle, resize: "vertical", border: "1px solid rgba(56, 189, 248, 0.24)", background: "rgba(2, 6, 23, 0.85)", padding: "10px 12px", marginBottom: 12 }}
           />
 
