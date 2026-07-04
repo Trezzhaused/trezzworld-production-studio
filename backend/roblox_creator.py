@@ -132,6 +132,16 @@ def _load_persisted_roblox_jobs() -> None:
 _load_persisted_roblox_jobs()
 
 
+def _publish_studio_snapshot(job: "RobloxJob") -> None:
+    """Publish the latest generated script payload into the Roblox studio bridge."""
+    try:
+        from .roblox_studio_bridge import get_studio_bridge  # noqa: PLC0415
+        bridge = get_studio_bridge()
+        bridge.record_snapshot(job.job_id, prompt=job.concept, files=job.scripts)
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # LUMI prompts
 # ---------------------------------------------------------------------------
@@ -225,9 +235,22 @@ Required scripts (minimum):
 5. src/StarterPlayerScripts/PlayerController.client.lua — input handling, UI updates
 6. src/StarterPlayerScripts/UIManager.client.lua — HUD, menus, notifications
 7. src/ReplicatedStorage/RemoteEvents.lua — all RemoteEvents/RemoteFunctions setup
+8. src/ReplicatedStorage/AccessibilityConfig.lua — accessibility defaults
+9. src/StarterPlayerScripts/MobileHUD.client.lua — mobile-first HUD and action wheel
+10. src/StarterPlayerScripts/Onboarding.client.lua — skippable two-step onboarding
 
-All code must be complete, commented, and use modern Luau syntax with type annotations where appropriate.
-Use task.wait() instead of wait(). Use game:GetService() for all services."""
+CRITICAL RULES:
+- NEVER use while true do unless it contains task.wait().
+- Yield at least once per frame using RunService.Heartbeat:Wait() or task.wait() for long-running loops.
+- Batch loops over 1,000 items and process at most 50 per frame.
+- Use ipairs for arrays and pairs for dictionaries.
+- NEVER modify a table while iterating with pairs.
+- Wrap all unsafe calls in pcall.
+- Use task.spawn, never spawn().
+- RemoteEvents should live in ReplicatedStorage/RemoteEvents.lua or a shared module.
+- UI must be mobile-first with a minimum 50x50 touch target, bottom-center layout, and no hover-only interactions.
+- Always include accessibility defaults: colorblind-safe colors, reduced-motion guards, tooltips, and high-contrast options.
+- All code must be complete, commented, and modern Luau."""
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +511,185 @@ print("[UIManager] HUD initialized for", player.Name)
 ''',
         },
         {
+            "path": "src/ReplicatedStorage/AccessibilityConfig.lua",
+            "type": "module",
+            "description": "Accessibility defaults for contrast, motion, and touch targets",
+            "content": f'''-- AccessibilityConfig.lua
+-- {title} — Shared accessibility defaults
+local AccessibilityConfig = {{}}
+
+AccessibilityConfig.HighContrast = false
+AccessibilityConfig.ReducedMotion = false
+AccessibilityConfig.TooltipsEnabled = true
+AccessibilityConfig.TouchTargetSize = 56
+
+function AccessibilityConfig:GetPrimaryColor()
+    if self.HighContrast then
+        return Color3.fromRGB(255, 255, 255)
+    end
+    return Color3.fromRGB(56, 189, 248)
+end
+
+function AccessibilityConfig:GetAccentColor()
+    if self.HighContrast then
+        return Color3.fromRGB(255, 200, 80)
+    end
+    return Color3.fromRGB(245, 158, 11)
+end
+
+return AccessibilityConfig
+''',
+        },
+        {
+            "path": "src/StarterPlayerScripts/MobileHUD.client.lua",
+            "type": "local",
+            "description": "Mobile-first HUD shell with bottom-center action wheel",
+            "content": f'''-- MobileHUD.client.lua
+-- {title} — Mobile-first HUD
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local hud = Instance.new("ScreenGui")
+hud.Name = "MobileHUD"
+hud.ResetOnSpawn = false
+hud.Parent = playerGui
+
+local root = Instance.new("Frame")
+root.Name = "Root"
+root.Size = UDim2.fromOffset(320, 112)
+root.Position = UDim2.new(0.5, -160, 1, -132)
+root.AnchorPoint = Vector2.new(0.5, 1)
+root.BackgroundTransparency = 1
+root.Parent = hud
+
+local wheel = Instance.new("Frame")
+wheel.Name = "ActionWheel"
+wheel.Size = UDim2.new(0, 220, 0, 56)
+wheel.Position = UDim2.new(0.5, -110, 1, -56)
+wheel.AnchorPoint = Vector2.new(0.5, 1)
+wheel.BackgroundColor3 = Color3.fromRGB(10, 22, 40)
+wheel.BorderSizePixel = 0
+wheel.Parent = root
+
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(0, 20)
+uiCorner.Parent = wheel
+
+local primaryButton = Instance.new("TextButton")
+primaryButton.Name = "Primary"
+primaryButton.Size = UDim2.new(0, 56, 0, 56)
+primaryButton.Position = UDim2.new(0.5, -28, 0.5, -28)
+primaryButton.AnchorPoint = Vector2.new(0.5, 0.5)
+primaryButton.BackgroundColor3 = Color3.fromRGB(56, 189, 248)
+primaryButton.Text = "▶"
+primaryButton.Font = Enum.Font.GothamBold
+primaryButton.TextSize = 22
+primaryButton.Parent = wheel
+
+local uiCorner2 = Instance.new("UICorner")
+uiCorner2.CornerRadius = UDim.new(0, 28)
+uiCorner2.Parent = primaryButton
+
+local hint = Instance.new("TextLabel")
+hint.Name = "Hint"
+hint.Size = UDim2.new(0, 220, 0, 24)
+hint.Position = UDim2.new(0, 0, 0, -28)
+hint.BackgroundTransparency = 1
+hint.Text = "Tap to play"
+hint.TextColor3 = Color3.fromRGB(255, 255, 255)
+hint.TextXAlignment = Enum.TextXAlignment.Center
+hint.TextScaled = true
+hint.Parent = wheel
+
+local accessibilityLabel = Instance.new("TextLabel")
+accessibilityLabel.Size = UDim2.new(0, 160, 0, 20)
+accessibilityLabel.Position = UDim2.new(0.5, -80, 1, 8)
+accessibilityLabel.AnchorPoint = Vector2.new(0.5, 0)
+accessibilityLabel.BackgroundTransparency = 1
+accessibilityLabel.Text = "Accessible / mobile-first"
+accessibilityLabel.TextColor3 = Color3.fromRGB(226, 232, 240)
+accessibilityLabel.TextScaled = true
+accessibilityLabel.Parent = root
+
+RunService.Heartbeat:Connect(function()
+    if primaryButton then
+        primaryButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    end
+end)
+''',
+        },
+        {
+            "path": "src/StarterPlayerScripts/Onboarding.client.lua",
+            "type": "local",
+            "description": "Skippable two-step onboarding for first-time players",
+            "content": f'''-- Onboarding.client.lua
+-- {title} — First-time onboarding
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "Onboarding"
+gui.ResetOnSpawn = false
+gui.Parent = playerGui
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 320, 0, 220)
+frame.Position = UDim2.new(0.5, -160, 0.5, -110)
+frame.AnchorPoint = Vector2.new(0.5, 0.5)
+frame.BackgroundColor3 = Color3.fromRGB(10, 22, 40)
+frame.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 20)
+corner.Parent = frame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -24, 0, 34)
+title.Position = UDim2.new(0, 12, 0, 12)
+title.BackgroundTransparency = 1
+title.Text = "Welcome"
+title.TextColor3 = Color3.fromRGB(56, 189, 248)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 24
+title.Parent = frame
+
+local body = Instance.new("TextLabel")
+body.Size = UDim2.new(1, -24, 0, 90)
+body.Position = UDim2.new(0, 12, 0, 62)
+body.BackgroundTransparency = 1
+body.Text = "Swipe, tap, and play. Skip anytime."
+body.TextColor3 = Color3.fromRGB(226, 232, 240)
+body.TextWrapped = true
+body.TextSize = 18
+body.Parent = frame
+
+local skip = Instance.new("TextButton")
+skip.Size = UDim2.new(0.5, -16, 0, 40)
+skip.Position = UDim2.new(0, 12, 1, -56)
+skip.BackgroundColor3 = Color3.fromRGB(56, 189, 248)
+skip.Text = "Skip"
+skip.Parent = frame
+
+local replay = Instance.new("TextButton")
+replay.Size = UDim2.new(0.5, -16, 0, 40)
+replay.Position = UDim2.new(0.5, 4, 1, -56)
+replay.BackgroundColor3 = Color3.fromRGB(245, 158, 11)
+replay.Text = "Replay"
+replay.Parent = frame
+
+skip.MouseButton1Click:Connect(function()
+    gui:Destroy()
+end)
+
+replay.MouseButton1Click:Connect(function()
+    gui:Destroy()
+end)
+''',
+        },
+        {
             "path": "default.project.json",
             "type": "module",
             "description": "Rojo project file for syncing with Roblox Studio",
@@ -666,6 +868,7 @@ def _run_roblox_pipeline(job_id: str) -> None:
         else:
             job.scripts = _fallback_scripts(job, design)
 
+        _publish_studio_snapshot(job)
         update("scripting", 75, f"{len(job.scripts)} scripts generated")
 
         # Step 3: Package into ZIP
@@ -673,6 +876,7 @@ def _run_roblox_pipeline(job_id: str) -> None:
         zip_path = _build_zip(job, design)
 
         job.output_path = str(zip_path)
+        _publish_studio_snapshot(job)
         update("done", 100, f"Game ready: {zip_path.name}")
 
     except Exception as exc:  # noqa: BLE001

@@ -1,5 +1,7 @@
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Header
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Header, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -788,6 +790,94 @@ class RobloxCreateRequest(BaseModel):
     monetization: str = "freemium"
     universeId: str | None = None
     placeId: str | None = None
+
+
+class RobloxStudioSyncRequest(BaseModel):
+    prompt: str | None = None
+    files: list[dict[str, Any]] | None = None
+
+
+@app.get("/api/roblox/game/{job_id}/studio-sync")
+def roblox_game_studio_sync(job_id: str):
+    """Return the latest synced studio payload for a Roblox game job."""
+    from .roblox_creator import get_roblox_job  # noqa: PLC0415
+    from .roblox_studio_bridge import get_studio_bridge  # noqa: PLC0415
+
+    job = get_roblox_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Roblox job '{job_id}' not found.")
+
+    bridge = get_studio_bridge()
+    return {
+        "jobId": job_id,
+        "status": job.status,
+        "hasSession": bridge.has_session(job_id),
+        **bridge.get_status(job_id),
+    }
+
+
+@app.post("/api/roblox/game/{job_id}/studio-sync")
+async def roblox_game_studio_sync_update(job_id: str, payload: RobloxStudioSyncRequest):
+    """Store a fresh studio sync payload and broadcast it to any connected Studio clients."""
+    from .roblox_creator import get_roblox_job  # noqa: PLC0415
+    from .roblox_studio_bridge import get_studio_bridge  # noqa: PLC0415
+
+    job = get_roblox_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Roblox job '{job_id}' not found.")
+
+    bridge = get_studio_bridge()
+    snapshot = bridge.record_snapshot(job_id, prompt=payload.prompt or job.concept, files=payload.files or [])
+    await bridge.publish(job_id, {"type": "SYNC", "source": "http"})
+    return {"ok": True, "snapshot": snapshot}
+
+
+@app.post("/api/roblox/game/{job_id}/studio-push")
+async def roblox_game_studio_push(job_id: str, payload: RobloxStudioSyncRequest):
+    """Push the latest script payload to connected Studio clients."""
+    from .roblox_creator import get_roblox_job  # noqa: PLC0415
+    from .roblox_studio_bridge import get_studio_bridge  # noqa: PLC0415
+
+    job = get_roblox_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Roblox job '{job_id}' not found.")
+
+    bridge = get_studio_bridge()
+    snapshot = bridge.record_snapshot(job_id, prompt=payload.prompt or job.concept, files=payload.files or [])
+    await bridge.publish(job_id, {"type": "INJECT", "files": snapshot["files"]})
+    return {"ok": True, "snapshot": snapshot}
+
+
+@app.websocket("/ws/roblox/studio")
+async def roblox_studio_socket(websocket: WebSocket):
+    """WebSocket bridge for Studio clients to receive generated Roblox payloads."""
+    from .roblox_studio_bridge import get_studio_bridge  # noqa: PLC0415
+
+    await websocket.accept()
+    bridge = get_studio_bridge()
+    job_id = "default"
+
+    try:
+        message = await websocket.receive_json()
+        if message.get("type") != "HELLO":
+            await websocket.send_json({"type": "ERROR", "message": "Expected HELLO."})
+            return
+
+        job_id = str(message.get("jobId") or "default")
+        bridge.register_session(job_id, websocket)
+        await websocket.send_json({"type": "WELCOME", "jobId": job_id})
+
+        while True:
+            payload = await websocket.receive_json()
+            message_type = payload.get("type")
+            if message_type == "LOG":
+                print(f"[RobloxStudio] [{payload.get('level', 'info')}] {payload.get('body', '')}")
+            elif message_type == "DISCONNECT":
+                break
+    except Exception:
+        pass
+    finally:
+        bridge.unregister_session(job_id, websocket)
 
 
 @app.post("/api/roblox/game/create")
