@@ -262,6 +262,19 @@ CRITICAL RULES:
 - Always include accessibility defaults: colorblind-safe colors, reduced-motion guards, tooltips, and high-contrast options.
 - All code must be complete, commented, and modern Luau."""
 
+_HARDENED_LUAU_SYSTEM_PROMPT = """You are an expert Roblox Senior Engineer specializing in high-performance Luau.
+You are generating code for a Roblox Studio plugin environment.
+
+CRITICAL CONSTRAINTS:
+1. Yielding is mandatory. Never use while true do without a yielding function. Always use task.wait() or RunService.Heartbeat:Wait().
+2. Any loop processing more than 1,000 items must use batching and process at most 50 items per frame.
+3. When iterating over tables that might change size, use ipairs for arrays and pairs for dictionaries. Never modify a table while iterating with pairs without copying the keys first.
+4. Wrap external calls (RemoteEvents, DataStores, HTTP requests) in pcall or xpcall.
+5. Prefer task.spawn over spawn() or delay(). Use caching for repeated lookups and avoid tight-loop FindFirstChild usage.
+6. Disconnect all RBXScriptConnections when a script unloads.
+7. Output ONLY valid JSON. Escape newlines as \\n. Keep paths Rojo-compatible and relative to the project root.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -299,6 +312,82 @@ def _parse_json(text: str) -> dict[str, Any] | None:
         except json.JSONDecodeError:
             pass
     return None
+
+
+def _build_hardened_messages(user_prompt: str, previous_error: str | None = None) -> list[dict[str, str]]:
+    """Build a hardened prompt set for Roblox Luau generation and self-correction."""
+    prompt = user_prompt
+    if previous_error:
+        prompt = f"{user_prompt}\n\nPREVIOUS ATTEMPT FAILED WITH ERROR:\n{previous_error}\nPlease fix the syntax or logic issue and return valid JSON only."
+    return [
+        {"role": "system", "content": _HARDENED_LUAU_SYSTEM_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
+
+
+def _call_lumi_with_retry(user_prompt: str, *, max_tokens: int = 6000, attempts: int = 2) -> dict[str, Any] | None:
+    """Retry JSON generation when the initial output is malformed or incomplete."""
+    previous_error: str | None = None
+    for _ in range(attempts):
+        response = _call_lumi(_build_hardened_messages(user_prompt, previous_error), max_tokens=max_tokens)
+        if not response:
+            previous_error = "No response received from LUMI."
+            continue
+        parsed = _parse_json(response)
+        if parsed is not None:
+            return parsed
+        previous_error = f"The response was not valid JSON. Raw preview: {response[:800]}"
+    return None
+
+
+def _normalize_script_payload(payload: Any) -> list[dict[str, str]]:
+    """Normalize AI output into the internal script schema used by the pipeline."""
+    if not isinstance(payload, dict):
+        return []
+
+    entries: list[Any] = []
+    if isinstance(payload.get("scripts"), list):
+        entries = payload["scripts"]
+    elif isinstance(payload.get("files"), list):
+        entries = payload["files"]
+
+    scripts: list[dict[str, str]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        path = entry.get("path") or entry.get("filePath") or entry.get("name")
+        if not isinstance(path, str) or not path.strip():
+            continue
+        content = entry.get("source") or entry.get("content") or entry.get("sourceCode") or ""
+        if not isinstance(content, str):
+            content = str(content)
+        if not content.strip():
+            continue
+
+        file_type = (entry.get("type") or entry.get("className") or "").lower()
+        if file_type in {"script", "server"}:
+            script_type = "server"
+        elif file_type in {"localscript", "local"}:
+            script_type = "local"
+        elif file_type in {"modulescript", "module"}:
+            script_type = "module"
+        else:
+            script_type = "server"
+            if ".client." in path.lower() or "/client/" in path.lower() or path.lower().endswith(".client.lua"):
+                script_type = "local"
+            elif ".server." in path.lower() or "/server/" in path.lower() or path.lower().endswith(".server.lua"):
+                script_type = "server"
+            elif ".lua" in path.lower() and "module" in path.lower():
+                script_type = "module"
+
+        scripts.append({
+            "path": path,
+            "type": script_type,
+            "description": str(entry.get("description") or ""),
+            "content": content,
+        })
+
+    return scripts
 
 
 def _fallback_design_doc(job: RobloxJob) -> dict[str, Any]:
@@ -1355,16 +1444,10 @@ def _run_roblox_pipeline(job_id: str) -> None:
             mechanics_summary=mechanics_summary,
             worlds_summary=worlds_summary,
         )
-        scripts_response = _call_lumi(
-            [
-                {"role": "system", "content": "You are an expert Roblox Luau developer. Respond only with valid JSON."},
-                {"role": "user", "content": scripts_prompt},
-            ],
-            max_tokens=6000,
-        )
-        scripts_data = _parse_json(scripts_response) if scripts_response else None
-        if scripts_data and isinstance(scripts_data.get("scripts"), list):
-            job.scripts = scripts_data["scripts"]
+        scripts_data = _call_lumi_with_retry(scripts_prompt, max_tokens=6000)
+        scripts_payload = _normalize_script_payload(scripts_data)
+        if scripts_payload:
+            job.scripts = scripts_payload
         else:
             job.scripts = _fallback_scripts(job, design)
 
