@@ -1,5 +1,14 @@
 import unittest
 
+from backend.company_vision import (
+    get_asset_generation_blueprint,
+    get_capability_matrix,
+    get_company_vision_summary,
+    get_launch_strategy,
+    get_legal_framework,
+    get_partnership_playbook,
+    get_pitch_deck,
+)
 from backend.platform_vision import (
     BRANDS,
     FRANCHISES,
@@ -33,6 +42,27 @@ class PlatformVisionTests(unittest.TestCase):
         self.assertTrue(schedule['ok'])
         self.assertEqual(schedule['brandId'], 'nike')
         self.assertEqual(schedule['event']['name'], 'Summer Dash')
+
+    def test_company_vision_summary_contains_core_strategy(self):
+        summary = get_company_vision_summary()
+        self.assertEqual(summary['company'], 'NextGen Studios, Inc.')
+        self.assertIn('SDK ecosystem', summary['moats'])
+
+    def test_pitch_deck_and_partnership_playbook_are_structured(self):
+        deck = get_pitch_deck()
+        playbook = get_partnership_playbook()
+        self.assertGreaterEqual(len(deck), 4)
+        self.assertEqual(playbook['tiers'][0]['name'], 'Consumer Brands')
+
+    def test_asset_generation_launch_and_legal_blueprints_are_available(self):
+        assets = get_asset_generation_blueprint()
+        launch = get_launch_strategy()
+        legal = get_legal_framework()
+        matrix = get_capability_matrix()
+        self.assertIn('Upload to Roblox (Open Cloud)', assets['architecture'])
+        self.assertEqual(launch['phases'][0]['name'], 'Stealth Beta')
+        self.assertIn('GDPR-K', legal['compliance'])
+        self.assertEqual(matrix[-1]['system'], 'Exit-Ready Company')
 
 
 if __name__ == '__main__':

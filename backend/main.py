@@ -6,6 +6,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from .config import APP_NAME, VERSION
+from .company_vision import (
+    get_asset_generation_blueprint,
+    get_capability_matrix,
+    get_company_vision_summary,
+    get_launch_strategy,
+    get_legal_framework,
+    get_partnership_playbook,
+    get_pitch_deck,
+)
 from .meta_builder import build_meta_builder_status, continue_meta_builder
 from .meta_development import build_meta_development_status
 from .platform_vision import (
@@ -44,6 +53,41 @@ def platform_brands():
 @app.get("/api/platform/public")
 def platform_public_surface():
     return get_public_api_surface()
+
+
+@app.get("/api/company/vision")
+def company_vision_summary():
+    return get_company_vision_summary()
+
+
+@app.get("/api/company/pitch-deck")
+def company_pitch_deck():
+    return {"slides": get_pitch_deck()}
+
+
+@app.get("/api/company/partnerships")
+def company_partnerships():
+    return get_partnership_playbook()
+
+
+@app.get("/api/company/assets")
+def company_assets():
+    return get_asset_generation_blueprint()
+
+
+@app.get("/api/company/launch")
+def company_launch_strategy():
+    return get_launch_strategy()
+
+
+@app.get("/api/company/legal")
+def company_legal_framework():
+    return get_legal_framework()
+
+
+@app.get("/api/company/capabilities")
+def company_capability_matrix():
+    return {"systems": get_capability_matrix()}
 
 
 class PlatformLiveOpsScheduleRequest(BaseModel):
