@@ -1,3 +1,5 @@
+import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +27,62 @@ from .platform_vision import (
 )
 from .studio_control_plane import boot_studio_mission, build_studio_control_plane
 
+def _cors_origins() -> list[str]:
+    raw = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return origins or ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+
 app = FastAPI(title=f"{APP_NAME} API", version=VERSION)
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+
+def _config_status() -> dict[str, Any]:
+    ffmpeg_path = os.environ.get("FFMPEG_PATH") or shutil.which("ffmpeg")
+    optional_keys = {
+        "HUGGINGFACE_API_KEY": "Photorealistic image/video generation",
+        "FAL_KEY": "Fal.ai video fallback",
+        "ROBLOX_API_KEY": "Roblox publishing fallback",
+        "ROBLOX_UNIVERSE_ID": "Roblox publishing target universe",
+        "ROBLOX_PLACE_ID": "Roblox publishing target place",
+        "ROBLOX_OAUTH_CLIENT_ID": "Roblox OAuth app",
+        "ROBLOX_OAUTH_CLIENT_SECRET": "Roblox OAuth app",
+        "ROBLOX_OAUTH_REDIRECT_URI": "Roblox OAuth redirect",
+        "OPENAI_API_KEY": "Optional direct OpenAI image fallback",
+        "DATA_DIR": "Persistent storage for mission history and exports",
+    }
+    required_keys = {
+        "OPENROUTER_API_KEY": "LUMI AI chat / model routing",
+    }
+    checks = []
+    for key, purpose in required_keys.items():
+        checks.append({"key": key, "required": True, "configured": bool(os.environ.get(key)), "purpose": purpose})
+    for key, purpose in optional_keys.items():
+        checks.append({"key": key, "required": False, "configured": bool(os.environ.get(key)), "purpose": purpose})
+
+    missing_required = [item["key"] for item in checks if item["required"] and not item["configured"]]
+    return {
+        "ok": not missing_required and bool(ffmpeg_path),
+        "ffmpeg": {
+            "configured": bool(ffmpeg_path),
+            "path": ffmpeg_path,
+        },
+        "required": checks[:len(required_keys)],
+        "optional": checks[len(required_keys):],
+        "missingRequired": missing_required,
+        "warnings": [
+            "Install ffmpeg and ensure it is on PATH or set FFMPEG_PATH to make video/audio generation work end-to-end.",
+        ] if not ffmpeg_path else [],
+    }
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,6 +95,11 @@ app.add_middleware(
 @app.get("/api/status")
 def status():
     return {"status": "running", "version": VERSION}
+
+
+@app.get("/api/config/status")
+def config_status():
+    return _config_status()
 
 
 @app.get("/api/platform/vision")
@@ -1274,8 +1336,8 @@ def roblox_auto_monetization(job_id: str, payload: RobloxAutoMonetizationRequest
             place_id=payload.placeId,
             cohort=payload.cohort,
         )
-    except Exception:
-        raise HTTPException(status_code=502, detail="Monetization asset creation failed.")
+    except Exception as exc:  # pragma: no cover - defensive guard against upstream failures
+        raise HTTPException(status_code=502, detail="Monetization asset creation failed.") from None
 
 
 @app.post("/api/roblox/analytics")
