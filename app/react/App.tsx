@@ -1414,6 +1414,29 @@ const ROBLOX_HUMAN_TODO = [
   { title: "Enable monetization toggles", body: "If this is the first time monetizing this experience, double-check 'Allow sales' / regional pricing toggles are enabled in the Creator Dashboard." },
 ];
 
+const CREATOR_CAPABILITIES = [
+  {
+    title: "Prompt to concept",
+    body: "Describe the vibe of your experience and the studio turns it into a launch-ready concept brief.",
+    icon: "✍️",
+  },
+  {
+    title: "Asset pipeline",
+    body: "Generate the core structure, scripts, metadata, and experience-ready assets in one place.",
+    icon: "🧱",
+  },
+  {
+    title: "Publish + monetize",
+    body: "Wrap the experience with publishing actions, launch checklists, and game pass or product setup.",
+    icon: "🚀",
+  },
+  {
+    title: "Human-in-the-loop",
+    body: "Keep the creative control high while letting Lumi handle the repetitive setup work for you.",
+    icon: "🧠",
+  },
+] as const;
+
 function RobloxTodoModal({ onClose }: { onClose: () => void }) {
   return (
     <div
@@ -1730,6 +1753,16 @@ function RobloxTab() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", marginBottom: 4 }}>
+        {CREATOR_CAPABILITIES.map((capability) => (
+          <div key={capability.title} style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 16, padding: 14 }}>
+            <div style={{ fontSize: 20, marginBottom: 8 }}>{capability.icon}</div>
+            <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 700, marginBottom: 4 }}>{capability.title}</div>
+            <div style={{ color: "#64748b", fontSize: 12, lineHeight: 1.5 }}>{capability.body}</div>
+          </div>
+        ))}
       </div>
 
       <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", alignItems: "start" }}>
