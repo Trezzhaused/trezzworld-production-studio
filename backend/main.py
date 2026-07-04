@@ -473,6 +473,14 @@ def lumi_chat_history(mission_id: str | None = None, limit: int = 40):
     return {"history": store.get_chat_history(mission_id, limit=limit)}
 
 
+@app.get("/api/lumi/memory/status")
+def lumi_memory_status(limit: int = 5):
+    """Return persisted memory-learning state for LUMI."""
+    from .mission_store import MissionStore  # noqa: PLC0415
+    store = MissionStore()
+    return store.memory_summary(limit=limit)
+
+
 # ---------------------------------------------------------------------------
 # User-provided AI provider key management
 # Users can connect their own OpenRouter/OpenAI/Anthropic/Google accounts

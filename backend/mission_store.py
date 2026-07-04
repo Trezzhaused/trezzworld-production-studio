@@ -238,3 +238,35 @@ class MissionStore:
             (capability, limit),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def memory_summary(self, limit: int = 5) -> dict[str, Any]:
+        """Return a compact summary of persisted LUMI memory-learning state."""
+        chat_rows = self._conn.execute(
+            "SELECT COUNT(*) AS count FROM lumi_chat"
+        ).fetchone()
+        fragment_rows = self._conn.execute(
+            "SELECT COUNT(*) AS count FROM output_fragments"
+        ).fetchone()
+        capability_rows = self._conn.execute(
+            "SELECT capability, COUNT(*) AS count FROM output_fragments GROUP BY capability ORDER BY count DESC LIMIT 6"
+        ).fetchall()
+        recent_fragments = self._conn.execute(
+            "SELECT capability, score, created_at, fragment FROM output_fragments ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return {
+            "chatTurns": int(chat_rows["count"] if chat_rows else 0),
+            "memoryFragments": int(fragment_rows["count"] if fragment_rows else 0),
+            "capabilities": [
+                {"capability": row["capability"], "count": int(row["count"])} for row in capability_rows
+            ],
+            "recentFragments": [
+                {
+                    "capability": row["capability"],
+                    "score": float(row["score"]),
+                    "createdAt": row["created_at"],
+                    "preview": (row["fragment"] or "")[:180],
+                }
+                for row in recent_fragments
+            ],
+        }

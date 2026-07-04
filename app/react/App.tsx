@@ -1958,6 +1958,7 @@ function LumiTab() {
   const [ollamaModel, setOllamaModel] = useState("");
   const [ollamaModels, setOllamaModels] = useState<{ id: string; available: boolean }[]>([]);
   const [cascade, setCascade] = useState<{ id: string; tier: string }[]>([]);
+  const [memoryStatus, setMemoryStatus] = useState<any>(null);
   const sessionId = useRef(getOrCreateSessionId());
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -1973,6 +1974,10 @@ function LumiTab() {
     fetch(`${API}/lumi/models`).then((r) => r.json()).then((d) => {
       setCascade(d.cascade ?? []);
       setOllamaModels(d.ollama?.catalogue ?? []);
+    }).catch(() => {});
+
+    fetch(`${API}/lumi/memory/status?limit=5`).then((r) => r.json()).then((d) => {
+      setMemoryStatus(d);
     }).catch(() => {});
   }, []);
 
@@ -2040,6 +2045,24 @@ function LumiTab() {
           </span>
         )}
       </div>
+
+      {memoryStatus && (
+        <div style={{ background: "#07111d", border: "1px solid #1e3a5f", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 700 }}>🧠 LUMI memory-learning</div>
+          <div style={{ color: "#64748b", fontSize: 11 }}>
+            {memoryStatus.chatTurns} chat turns • {memoryStatus.memoryFragments} learned fragments • {memoryStatus.capabilities?.length ?? 0} capabilities
+          </div>
+          {memoryStatus.recentFragments?.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {memoryStatus.recentFragments.slice(0, 3).map((fragment: any, index: number) => (
+                <div key={`${fragment.capability}-${index}`} style={{ color: "#94a3b8", fontSize: 11, background: "#0f172a", borderRadius: 6, padding: "6px 8px" }}>
+                  <span style={{ color: "#38bdf8" }}>{fragment.capability}</span> · score {fragment.score.toFixed(2)} · {fragment.preview}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Messages */}
       <div ref={scrollRef} style={{
