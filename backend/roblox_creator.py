@@ -61,6 +61,7 @@ class RobloxJob:
     message: str = ""
     design_doc: dict[str, Any] = field(default_factory=dict)
     scripts: list[dict[str, str]] = field(default_factory=list)  # [{path, content}]
+    monetization_assets: list[dict[str, Any]] = field(default_factory=list)
     output_path: str | None = None
     error: str | None = None
     created_at: float = field(default_factory=time.time)
@@ -80,6 +81,7 @@ class RobloxJob:
             "message": self.message,
             "designDoc": self.design_doc,
             "scriptCount": len(self.scripts),
+            "monetizationAssets": self.monetization_assets,
             "outputPath": self.output_path,
             "downloadReady": self.output_path is not None and Path(self.output_path).exists(),
             "error": self.error,
@@ -104,6 +106,7 @@ class RobloxJob:
             progress=d.get("progress", 0),
             message=d.get("message", ""),
             design_doc=d.get("designDoc") or {},
+            monetization_assets=d.get("monetizationAssets") or [],
             output_path=d.get("outputPath"),
             error=d.get("error"),
             created_at=d.get("createdAt", time.time()),
@@ -238,6 +241,13 @@ Required scripts (minimum):
 8. src/ReplicatedStorage/AccessibilityConfig.lua — accessibility defaults
 9. src/StarterPlayerScripts/MobileHUD.client.lua — mobile-first HUD and action wheel
 10. src/StarterPlayerScripts/Onboarding.client.lua — skippable two-step onboarding
+11. src/ServerScriptService/monetization/store.lua — server-side purchase entrypoint and remote setup
+12. src/ServerScriptService/monetization/products.lua — developer product and game pass definitions
+13. src/ServerScriptService/monetization/validator.lua — receipt validation and anti-exploit checks
+14. src/ServerScriptService/simulation/clicker.lua — core simulator progression loop
+15. src/ServerScriptService/simulation/boosts.lua — boost timers and prestige triggers
+16. src/ServerScriptService/simulation/leaderstats.lua — leaderstat tracking for coins and progress
+17. src/ServerScriptService/analytics/tracker.lua — analytics hook and event queueing
 
 CRITICAL RULES:
 - NEVER use while true do unless it contains task.wait().
@@ -337,7 +347,8 @@ def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
 def _fallback_scripts(job: RobloxJob, design: dict[str, Any]) -> list[dict[str, str]]:
     """Minimal script set when AI is unavailable."""
     title = design.get("title", job.concept)
-    return [
+    analytics_url = os.environ.get("ROBLOX_ANALYTICS_URL", "https://your-backend.com/api/roblox/analytics")
+    scripts = [
         {
             "path": "src/ServerScriptService/GameCore.server.lua",
             "type": "server",
@@ -690,6 +701,212 @@ end)
 ''',
         },
         {
+            "path": "src/ServerScriptService/init.server.lua",
+            "type": "server",
+            "description": "Bootstrap script for simulator gameplay and monetization",
+            "content": f'''-- init.server.lua
+-- {title} bootstrap
+local ServerScriptService = game:GetService("ServerScriptService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+
+local shared = ReplicatedStorage:FindFirstChild("Shared") or Instance.new("Folder")
+shared.Name = "Shared"
+shared.Parent = ReplicatedStorage
+
+print("[GameBootstrap]", "{title}", "initialized")
+Players.PlayerAdded:Connect(function(player)
+    local leaderstats = Instance.new("Folder")
+    leaderstats.Name = "leaderstats"
+    leaderstats.Parent = player
+    local coins = Instance.new("IntValue")
+    coins.Name = "Coins"
+    coins.Value = 0
+    coins.Parent = leaderstats
+end)
+''',
+        },
+        {
+            "path": "src/ServerScriptService/monetization/store.lua",
+            "type": "server",
+            "description": "Monetization store entrypoint for developer products and game passes",
+            "content": '''-- monetization/store.lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local MarketplaceService = game:GetService("MarketplaceService")
+local Players = game:GetService("Players")
+
+local shared = ReplicatedStorage:FindFirstChild("Shared") or Instance.new("Folder")
+shared.Name = "Shared"
+shared.Parent = ReplicatedStorage
+
+local remotes = shared:FindFirstChild("Remotes") or Instance.new("Folder")
+remotes.Name = "Remotes"
+remotes.Parent = shared
+
+local purchaseRemote = remotes:FindFirstChild("PurchaseProduct") or Instance.new("RemoteFunction")
+purchaseRemote.Name = "PurchaseProduct"
+purchaseRemote.Parent = remotes
+
+local equipRemote = remotes:FindFirstChild("EquipItem") or Instance.new("RemoteEvent")
+equipRemote.Name = "EquipItem"
+equipRemote.Parent = remotes
+
+purchaseRemote.OnServerInvoke = function(player, productId)
+    local ok, _ = pcall(function()
+        MarketplaceService:PromptProductPurchase(player, productId)
+    end)
+    return ok
+end
+
+Players.PlayerAdded:Connect(function(player)
+    player:SetAttribute("AutoClicker", false)
+    player:SetAttribute("Multiplier", 1)
+end)
+''',
+        },
+        {
+            "path": "src/ServerScriptService/monetization/products.lua",
+            "type": "module",
+            "description": "Default monetization product definitions for the generated simulator",
+            "content": '''-- monetization/products.lua
+return {
+    CoinPack = { ProductId = 0, Price = 99, Type = "DeveloperProduct" },
+    AutoClicker = { ProductId = 0, Price = 199, Type = "GamePass" },
+    TripleBoost = { ProductId = 0, Price = 299, Type = "DeveloperProduct" },
+    VIP = { ProductId = 0, Price = 499, Type = "GamePass" },
+}
+''',
+        },
+        {
+            "path": "src/ServerScriptService/monetization/validator.lua",
+            "type": "server",
+            "description": "Receipt validation guardrails and anti-exploit enforcement",
+            "content": '''-- monetization/validator.lua
+local MarketplaceService = game:GetService("MarketplaceService")
+local Players = game:GetService("Players")
+
+local VALID_PRODUCTS = {
+    [123456789] = "CoinPack",
+    [987654321] = "AutoClicker",
+}
+
+MarketplaceService.ProcessReceipt = function(receipt)
+    local player = Players:GetPlayerByUserId(receipt.PlayerId)
+    if not player then
+        return Enum.ProductPurchaseDecision.NotProcessedYet
+    end
+
+    local productKey = VALID_PRODUCTS[receipt.ProductId]
+    if not productKey then
+        return Enum.ProductPurchaseDecision.NotProcessedYet
+    end
+
+    player:SetAttribute(productKey, true)
+    return Enum.ProductPurchaseDecision.PurchaseGranted
+end
+''',
+        },
+        {
+            "path": "src/ServerScriptService/simulation/clicker.lua",
+            "type": "server",
+            "description": "Core idle simulator progression loop",
+            "content": '''-- simulation/clicker.lua
+local Players = game:GetService("Players")
+
+Players.PlayerAdded:Connect(function(player)
+    local leaderstats = player:WaitForChild("leaderstats")
+    local coins = leaderstats:WaitForChild("Coins")
+
+    task.spawn(function()
+        while player.Parent do
+            if player:GetAttribute("AutoClicker") then
+                coins.Value += 1 * (player:GetAttribute("Multiplier") or 1)
+            end
+            task.wait(0.5)
+        end
+    end)
+end)
+''',
+        },
+        {
+            "path": "src/ServerScriptService/simulation/boosts.lua",
+            "type": "server",
+            "description": "Boost timers and prestige triggers",
+            "content": '''-- simulation/boosts.lua
+local Players = game:GetService("Players")
+
+Players.PlayerAdded:Connect(function(player)
+    player:SetAttribute("BoostActive", false)
+    player:SetAttribute("PrestigeLevel", 0)
+end)
+''',
+        },
+        {
+            "path": "src/ServerScriptService/simulation/leaderstats.lua",
+            "type": "server",
+            "description": "Leaderstats setup and progression tracking",
+            "content": '''-- simulation/leaderstats.lua
+local Players = game:GetService("Players")
+
+Players.PlayerAdded:Connect(function(player)
+    local leaderstats = Instance.new("Folder")
+    leaderstats.Name = "leaderstats"
+    leaderstats.Parent = player
+
+    local coins = Instance.new("IntValue")
+    coins.Name = "Coins"
+    coins.Value = 0
+    coins.Parent = leaderstats
+
+    local prestige = Instance.new("IntValue")
+    prestige.Name = "Prestige"
+    prestige.Value = 0
+    prestige.Parent = leaderstats
+end)
+''',
+        },
+        {
+            "path": "src/ServerScriptService/analytics/tracker.lua",
+            "type": "server",
+            "description": "Analytics hook for store and progression events",
+            "content": '''-- analytics/tracker.lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+
+local shared = ReplicatedStorage:FindFirstChild("Shared") or Instance.new("Folder")
+shared.Name = "Shared"
+shared.Parent = ReplicatedStorage
+
+local remotes = shared:FindFirstChild("Remotes") or Instance.new("Folder")
+remotes.Name = "Remotes"
+remotes.Parent = shared
+
+local remote = remotes:FindFirstChild("LogEvent") or Instance.new("RemoteEvent")
+remote.Name = "LogEvent"
+remote.Parent = remotes
+
+remote.OnServerEvent:Connect(function(player, eventName, payload)
+    local data = {
+        userId = player.UserId,
+        event = eventName,
+        payload = payload,
+        ts = DateTime.now().UnixTimestamp,
+    }
+
+    task.spawn(function()
+        pcall(function()
+            HttpService:RequestAsync({
+                Url = "{analytics_url}",
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = HttpService:JSONEncode(data),
+            })
+        end)
+    end)
+end)
+'''.replace("{analytics_url}", analytics_url),
+        },
+        {
             "path": "default.project.json",
             "type": "module",
             "description": "Rojo project file for syncing with Roblox Studio",
@@ -716,6 +933,289 @@ end)
             }, indent=2),
         },
     ]
+
+    genre = (job.genre or "").lower()
+    if "rpg" in genre:
+        scripts.extend([
+            {
+                "path": "src/ServerScriptService/rpg/combat.lua",
+                "type": "server",
+                "description": "Server-authoritative combat loop for the RPG",
+                "content": '''-- rpg/combat.lua
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local Combat = {}
+Combat.__index = Combat
+
+function Combat.start(player)
+    local stats = player:WaitForChild("leaderstats")
+    local damage = stats:FindFirstChild("Damage") and stats.Damage.Value or 5
+    local multiplier = player:GetAttribute("VIP") and 1.5 or 1
+
+    task.spawn(function()
+        while player.Parent do
+            local enemy = workspace:FindFirstChild("EnemyDummy")
+            if enemy then
+                enemy:SetAttribute("Health", (enemy:GetAttribute("Health") or 100) - damage * multiplier)
+            end
+            task.wait(0.5)
+        end
+    end)
+end
+
+return Combat
+''',
+            },
+            {
+                "path": "src/ServerScriptService/rpg/inventory.lua",
+                "type": "server",
+                "description": "Inventory and equipment ownership validation",
+                "content": '''-- rpg/inventory.lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local EQUIP_REMOTE = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"):WaitForChild("EquipItem")
+local Inventory = {}
+
+function Inventory.equip(player, itemId)
+    if player:GetAttribute("EquippedWeapon") == itemId then
+        return
+    end
+
+    player:SetAttribute("EquippedWeapon", itemId)
+    EQUIP_REMOTE:FireClient(player, itemId)
+end
+
+return Inventory
+''',
+            },
+            {
+                "path": "src/ServerScriptService/rpg/xp.lua",
+                "type": "server",
+                "description": "XP and progression for the RPG loop",
+                "content": '''-- rpg/xp.lua
+local Players = game:GetService("Players")
+
+local XP = {}
+
+function XP.award(player, amount)
+    local leaderstats = player:WaitForChild("leaderstats")
+    local xp = leaderstats:FindFirstChild("XP") or Instance.new("IntValue")
+    xp.Name = "XP"
+    xp.Parent = leaderstats
+    xp.Value += amount
+end
+
+return XP
+''',
+            },
+            {
+                "path": "src/ServerScriptService/rpg/battlepass.lua",
+                "type": "server",
+                "description": "Battle pass progression and reward tracking",
+                "content": '''-- rpg/battlepass.lua
+local BattlePass = {}
+
+function BattlePass.awardXP(player, amount)
+    local bpLevel = player:GetAttribute("BattlePassLevel") or 1
+    local bpXP = player:GetAttribute("BattlePassXP") or 0
+
+    bpXP += amount
+    if bpXP >= 1000 then
+        bpLevel += 1
+        bpXP = 0
+    end
+
+    player:SetAttribute("BattlePassLevel", bpLevel)
+    player:SetAttribute("BattlePassXP", bpXP)
+end
+
+return BattlePass
+''',
+            },
+        ])
+    elif "tycoon" in genre:
+        scripts.extend([
+            {
+                "path": "src/ServerScriptService/tycoon/plot.lua",
+                "type": "server",
+                "description": "Plot ownership for the tycoon",
+                "content": '''-- tycoon/plot.lua
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local Plot = {}
+
+function Plot.assign(player)
+    local plots = Workspace:FindFirstChild("Plots")
+    if not plots then return end
+
+    for _, plot in plots:GetChildren() do
+        if not plot:GetAttribute("Owner") then
+            plot:SetAttribute("Owner", player.UserId)
+            player:SetAttribute("PlotId", plot.Name)
+            return plot
+        end
+    end
+end
+
+return Plot
+''',
+            },
+            {
+                "path": "src/ServerScriptService/tycoon/dropper.lua",
+                "type": "server",
+                "description": "Passive income dropper loop",
+                "content": '''-- tycoon/dropper.lua
+local RunService = game:GetService("RunService")
+
+local Dropper = {}
+
+function Dropper.start(plot, incomePerSecond)
+    local cash = plot:FindFirstChild("Cash", true)
+    task.spawn(function()
+        while cash do
+            cash.Value += incomePerSecond
+            task.wait(1)
+        end
+    end)
+end
+
+return Dropper
+''',
+            },
+            {
+                "path": "src/ServerScriptService/tycoon/income.lua",
+                "type": "server",
+                "description": "Income calculations and passive growth",
+                "content": '''-- tycoon/income.lua
+local Income = {}
+
+function Income.compute(player)
+    local multiplier = 1
+    if player:GetAttribute("AutoCollector") then multiplier += 0.5 end
+    if player:GetAttribute("IncomeBoost") then multiplier += 1 end
+    if player:GetAttribute("VIP") then multiplier += 1.5 end
+    return multiplier
+end
+
+return Income
+''',
+            },
+            {
+                "path": "src/ServerScriptService/tycoon/upgrades.lua",
+                "type": "server",
+                "description": "Upgrade application and multiplier logic",
+                "content": '''-- tycoon/upgrades.lua
+local Upgrades = {}
+
+function Upgrades.apply(player)
+    player:SetAttribute("IncomeMultiplier", 1)
+    if player:GetAttribute("AutoCollector") then
+        player:SetAttribute("IncomeMultiplier", 1.5)
+    end
+    if player:GetAttribute("IncomeBoost") then
+        player:SetAttribute("IncomeMultiplier", player:GetAttribute("IncomeMultiplier") + 1)
+    end
+    if player:GetAttribute("VIP") then
+        player:SetAttribute("IncomeMultiplier", player:GetAttribute("IncomeMultiplier") + 1.5)
+    end
+end
+
+return Upgrades
+''',
+            },
+        ])
+    elif "obby" in genre:
+        scripts.extend([
+            {
+                "path": "src/ServerScriptService/obby/stages.lua",
+                "type": "server",
+                "description": "Server-authoritative stage progression",
+                "content": '''-- obby/stages.lua
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local Stages = {}
+
+function Stages.load(player)
+    local stage = player:GetAttribute("Stage") or 1
+    local checkpoint = Workspace:FindFirstChild("Checkpoints") and Workspace.Checkpoints:FindFirstChild(tostring(stage))
+    if checkpoint and player.Character then
+        player.Character:PivotTo(checkpoint.CFrame + Vector3.new(0, 3, 0))
+    end
+end
+
+function Stages.advance(player)
+    local stage = player:GetAttribute("Stage") or 1
+    player:SetAttribute("Stage", stage + 1)
+    Stages.load(player)
+end
+
+return Stages
+''',
+            },
+            {
+                "path": "src/ServerScriptService/obby/checkpoint.lua",
+                "type": "server",
+                "description": "Checkpoint validation and server-side progression",
+                "content": '''-- obby/checkpoint.lua
+local Checkpoint = {}
+
+function Checkpoint.validate(player, checkpointId)
+    return player:GetAttribute("Stage") == checkpointId
+end
+
+return Checkpoint
+''',
+            },
+            {
+                "path": "src/ServerScriptService/obby/cosmetics.lua",
+                "type": "server",
+                "description": "Cosmetic trail equipping for the obby",
+                "content": '''-- obby/cosmetics.lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Cosmetics = {}
+
+function Cosmetics.equip(player, trailId)
+    local character = player.Character
+    if not character then return end
+
+    local trail = ReplicatedStorage:FindFirstChild("Assets") and ReplicatedStorage.Assets:FindFirstChild("Trails") and ReplicatedStorage.Assets.Trails:FindFirstChild(trailId)
+    if trail then
+        trail:Clone().Parent = character
+    end
+end
+
+return Cosmetics
+''',
+            },
+            {
+                "path": "src/ServerScriptService/obby/upsell.lua",
+                "type": "server",
+                "description": "Low-friction purchase flow for stage skips",
+                "content": '''-- obby/upsell.lua
+local MarketplaceService = game:GetService("MarketplaceService")
+
+local Upsell = {}
+
+function Upsell.skipStage(player, productId)
+    local success = pcall(function()
+        MarketplaceService:PromptProductPurchase(player, productId)
+    end)
+
+    if success then
+        player:SetAttribute("Stage", (player:GetAttribute("Stage") or 1) + 1)
+    end
+end
+
+return Upsell
+''',
+            },
+        ])
+
+    return scripts
 
 
 # ---------------------------------------------------------------------------

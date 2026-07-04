@@ -1098,6 +1098,20 @@ class RobloxMonetizationRequest(BaseModel):
     placeId: str | None = None
 
 
+class RobloxAutoMonetizationRequest(BaseModel):
+    cohort: str = "control"
+    apiKey: str | None = None
+    universeId: str | None = None
+    placeId: str | None = None
+
+
+class RobloxAnalyticsEventRequest(BaseModel):
+    userId: int | None = None
+    event: str
+    payload: dict[str, Any] | None = None
+    ts: int | None = None
+
+
 @app.post("/api/roblox/game/{job_id}/monetization/game-pass")
 def roblox_create_game_pass(job_id: str, payload: RobloxMonetizationRequest):
     """Create a Game Pass at a given Robux price point for this game's universe."""
@@ -1152,6 +1166,42 @@ def roblox_list_monetization(job_id: str):
     except RobloxPublishError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"gamePasses": passes, "developerProducts": products}
+
+
+@app.get("/api/roblox/game/{job_id}/monetization/plan")
+def roblox_monetization_plan(job_id: str, cohort: str = "control"):
+    """Return a genre-aware monetization plan for this Roblox job."""
+    from .roblox_creator import get_roblox_job  # noqa: PLC0415
+    from .roblox_monetization import build_monetization_plan  # noqa: PLC0415
+
+    job = get_roblox_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Roblox job '{job_id}' not found.")
+    return build_monetization_plan(job, cohort=cohort)
+
+
+@app.post("/api/roblox/game/{job_id}/monetization/auto")
+def roblox_auto_monetization(job_id: str, payload: RobloxAutoMonetizationRequest):
+    """Create a monetization bundle (developer products and game passes) for a Roblox job."""
+    from .roblox_creator import get_roblox_job  # noqa: PLC0415
+    from .roblox_monetization import create_monetization_assets  # noqa: PLC0415
+
+    job = get_roblox_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Roblox job '{job_id}' not found.")
+    return create_monetization_assets(
+        job,
+        api_key=payload.apiKey,
+        universe_id=payload.universeId,
+        place_id=payload.placeId,
+        cohort=payload.cohort,
+    )
+
+
+@app.post("/api/roblox/analytics")
+def roblox_analytics(payload: RobloxAnalyticsEventRequest):
+    """Receive analytics events shipped from generated Roblox games."""
+    return {"ok": True, "event": payload.event}
 
 
 @app.post("/api/debug/video-test")
