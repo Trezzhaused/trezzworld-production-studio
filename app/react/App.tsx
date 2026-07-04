@@ -1368,6 +1368,36 @@ interface RobloxJob {
 
 const ROBLOX_GENRES = ["Adventure", "Obby", "Simulator", "RPG", "Tycoon", "Horror", "Battle Royale", "Roleplay"];
 const ROBLOX_MONETIZATION = ["freemium", "premium", "gamepasses-only", "ad-supported"];
+const ROBLOX_TEMPLATES = [
+  {
+    id: "tycoon",
+    title: "Tycoon",
+    genre: "Tycoon",
+    monetization: "freemium",
+    prompt: "A cozy but chaotic tycoon where players run a smoothie shop, expand to a mall, and unlock wild upgrades.",
+  },
+  {
+    id: "obby",
+    title: "Obby",
+    genre: "Obby",
+    monetization: "premium",
+    prompt: "A bright, fast-paced obby with moving platforms, hidden shortcuts, and a dramatic final boss stage.",
+  },
+  {
+    id: "sim",
+    title: "Simulator",
+    genre: "Simulator",
+    monetization: "ad-supported",
+    prompt: "A relaxing simulator where players collect magical pets, decorate a floating island, and unlock rare rarities.",
+  },
+  {
+    id: "horror",
+    title: "Horror",
+    genre: "Horror",
+    monetization: "gamepasses-only",
+    prompt: "A spooky multiplayer horror experience where players solve environmental puzzles while dodging a mysterious entity.",
+  },
+] as const;
 
 // Steps Lumi/Luau genuinely cannot do via any Roblox API — confirmed via Roblox's
 // own Open Cloud docs (no API exists for these; they require the Roblox website/Studio).
@@ -1562,6 +1592,7 @@ function RobloxTab() {
   const [selectedJob, setSelectedJob] = useState<RobloxJob | null>(null);
   const [oauthStatus, setOauthStatus] = useState<{ connected: boolean; user?: any }>({ connected: false });
   const [lookingUpUniverse, setLookingUpUniverse] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState("tycoon");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const lookupUniverseFromPlace = async (rawPlaceId: string) => {
@@ -1617,6 +1648,13 @@ function RobloxTab() {
     }
   };
 
+  const applyTemplate = (template: (typeof ROBLOX_TEMPLATES)[number]) => {
+    setSelectedTemplate(template.id);
+    setConcept(template.prompt);
+    setGenre(template.genre);
+    setMonetization(template.monetization);
+  };
+
   useEffect(() => {
     pollRef.current = setInterval(async () => {
       const active = jobs.filter((j) => !["done", "error"].includes(j.status));
@@ -1641,75 +1679,175 @@ function RobloxTab() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Roblox sign-in bar */}
       <div style={{
-        display: "flex", justifyContent: "space-between", alignItems: "center",
-        background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 8, padding: "10px 14px",
+        background: "linear-gradient(135deg, #ff9b2e 0%, #ff4d6d 45%, #7c4dff 100%)",
+        borderRadius: 24,
+        padding: 24,
+        color: "#fff",
+        border: "1px solid rgba(255,255,255,0.26)",
+        boxShadow: "0 20px 60px rgba(255, 77, 109, 0.2)",
       }}>
-        <div style={{ color: "#94a3b8", fontSize: 12 }}>
-          {oauthStatus.connected
-            ? `🎮 Signed in as ${oauthStatus.user?.name || oauthStatus.user?.preferred_username || "Roblox user"}`
-            : "🎮 Not signed in — publish/monetization will use a static admin API key if configured"}
-        </div>
-        {oauthStatus.connected ? (
-          <button onClick={signOut} style={btnStyle(true)}>Sign out</button>
-        ) : (
-          <a href={`${API}/roblox/oauth/login`} style={{ ...btnStyle(true), textDecoration: "none" }}>Sign in with Roblox</a>
-        )}
-      </div>
-
-      {/* Creation form */}
-      <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 10, padding: 14 }}>
-        <textarea
-          value={concept}
-          onChange={(e) => setConcept(e.target.value)}
-          placeholder='Describe your game... (e.g., "A tycoon where players build and manage a pizza shop")'
-          rows={3}
-          style={{ ...inputStyle, resize: "vertical", border: "none", background: "transparent", padding: "4px 2px", marginBottom: 10 }}
-        />
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
-          <select value={genre} onChange={(e) => setGenre(e.target.value)} style={pillStyle}>
-            {ROBLOX_GENRES.map((g) => <option key={g} value={g}>{g}</option>)}
-          </select>
-          <input type="number" value={maxPlayers} min={2} max={100} onChange={(e) => setMaxPlayers(parseInt(e.target.value) || 20)} title="Max players" style={{ ...pillStyle, width: 70 }} />
-          <select value={monetization} onChange={(e) => setMonetization(e.target.value)} style={pillStyle}>
-            {ROBLOX_MONETIZATION.map((m) => <option key={m} value={m}>{m}</option>)}
-          </select>
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <input
-            type="text"
-            placeholder="Place ID (or paste the game's roblox.com URL)"
-            value={placeId}
-            onChange={(e) => setPlaceId(e.target.value)}
-            onBlur={(e) => lookupUniverseFromPlace(e.target.value)}
-            style={{ ...inputStyle, width: 260 }}
-          />
-          <input
-            type="text"
-            placeholder={lookingUpUniverse ? "Looking up..." : "Universe ID (auto-fills if found)"}
-            value={universeId}
-            onChange={(e) => setUniverseId(e.target.value)}
-            style={{ ...inputStyle, width: 220 }}
-          />
-          <div style={{ flex: 1 }} />
-          <button onClick={createJob} disabled={!canCreate} style={{ ...btnStyle(!!canCreate), padding: "10px 20px", fontSize: 13, fontWeight: 700 }}>
-            {creating ? "⏳ Creating..." : "🎮 Generate Game"}
-          </button>
-        </div>
-        {(!universeId.trim() || !placeId.trim()) && (
-          <div style={{ color: "#64748b", fontSize: 11, marginTop: 8 }}>
-            Don't have these yet? Create an empty Experience at{" "}
-            <a href="https://create.roblox.com/dashboard/creations" target="_blank" rel="noreferrer" style={{ color: "#38bdf8" }}>
-              create.roblox.com
-            </a>{" "}— Roblox doesn't offer an API to create one from scratch, or to list your
-            experiences automatically even when signed in. Paste the Place ID (or the game's
-            URL) above and the Universe ID auto-fills when possible.
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ maxWidth: 620 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.24em", textTransform: "uppercase", opacity: 0.9 }}>
+              AI Roblox Studio
+            </div>
+            <div style={{ fontSize: 34, fontWeight: 800, lineHeight: 1.05, marginTop: 8 }}>
+              Build your next hit experience with a prompt and a few smart choices.
+            </div>
+            <div style={{ fontSize: 14, marginTop: 10, opacity: 0.92, maxWidth: 560 }}>
+              Describe the vibe, pick a template, connect your experience IDs, and let the studio generate the core systems and launch-ready structure.
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
+              <button onClick={() => document.getElementById("roblox-creator-form")?.scrollIntoView({ behavior: "smooth", block: "start" })} style={{ ...btnStyle(true), background: "#fff", color: "#111827", padding: "10px 16px" }}>
+                ✨ Start building
+              </button>
+              <div style={{ ...btnStyle(true), background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)" }}>
+                ⚡ Prompt → Generate → Publish
+              </div>
+            </div>
           </div>
-        )}
+          <div style={{ minWidth: 250, background: "rgba(3, 7, 18, 0.24)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 18, padding: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", opacity: 0.8 }}>Studio flow</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+              {[
+                "Describe the game idea in plain English",
+                "Pick a template and tune the genre",
+                "Generate the experience and launch assets",
+              ].map((step) => (
+                <div key={step} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#fff" }} />
+                  <span>{step}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Jobs list */}
+      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "1.5fr 0.85fr", alignItems: "start" }}>
+        <div id="roblox-creator-form" style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 18, padding: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ color: "#e2e8f0", fontSize: 16, fontWeight: 700 }}>Create a Roblox experience</div>
+              <div style={{ color: "#64748b", fontSize: 12, marginTop: 2 }}>Start from a template or type your own idea.</div>
+            </div>
+            <div style={{ color: "#38bdf8", fontSize: 12, fontWeight: 700 }}>Prompt-first workflow</div>
+          </div>
+
+          <textarea
+            value={concept}
+            onChange={(e) => setConcept(e.target.value)}
+            placeholder='Describe your game... (e.g., "A tycoon where players build and manage a pizza shop")'
+            rows={4}
+            style={{ ...inputStyle, resize: "vertical", border: "1px solid rgba(56, 189, 248, 0.24)", background: "rgba(2, 6, 23, 0.85)", padding: "10px 12px", marginBottom: 12 }}
+          />
+
+          <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", marginBottom: 8 }}>
+            Quick starts
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            {ROBLOX_TEMPLATES.map((template) => {
+              const active = selectedTemplate === template.id;
+              return (
+                <button
+                  key={template.id}
+                  onClick={() => applyTemplate(template)}
+                  style={{
+                    background: active ? "rgba(56, 189, 248, 0.16)" : "#0f172a",
+                    border: active ? "1px solid rgba(56, 189, 248, 0.48)" : "1px solid #1e3a5f",
+                    borderRadius: 999,
+                    color: active ? "#e2e8f0" : "#94a3b8",
+                    padding: "8px 12px",
+                    cursor: "pointer",
+                    fontSize: 12,
+                    fontWeight: 700,
+                  }}
+                >
+                  {template.title}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+            <select value={genre} onChange={(e) => setGenre(e.target.value)} style={{ ...pillStyle, minWidth: 120 }}>
+              {ROBLOX_GENRES.map((g) => <option key={g} value={g}>{g}</option>)}
+            </select>
+            <input type="number" value={maxPlayers} min={2} max={100} onChange={(e) => setMaxPlayers(parseInt(e.target.value) || 20)} title="Max players" style={{ ...pillStyle, width: 70 }} />
+            <select value={monetization} onChange={(e) => setMonetization(e.target.value)} style={{ ...pillStyle, minWidth: 140 }}>
+              {ROBLOX_MONETIZATION.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              type="text"
+              placeholder="Place ID (or paste the game's roblox.com URL)"
+              value={placeId}
+              onChange={(e) => setPlaceId(e.target.value)}
+              onBlur={(e) => lookupUniverseFromPlace(e.target.value)}
+              style={{ ...inputStyle, flex: 1, minWidth: 220 }}
+            />
+            <input
+              type="text"
+              placeholder={lookingUpUniverse ? "Looking up..." : "Universe ID (auto-fills if found)"}
+              value={universeId}
+              onChange={(e) => setUniverseId(e.target.value)}
+              style={{ ...inputStyle, flex: 1, minWidth: 220 }}
+            />
+            <button onClick={createJob} disabled={!canCreate} style={{ ...btnStyle(!!canCreate), padding: "10px 20px", fontSize: 13, fontWeight: 700 }}>
+              {creating ? "⏳ Creating..." : "🎮 Generate Game"}
+            </button>
+          </div>
+          {(!universeId.trim() || !placeId.trim()) && (
+            <div style={{ color: "#64748b", fontSize: 11, marginTop: 10 }}>
+              Don't have these yet? Create an empty Experience at{" "}
+              <a href="https://create.roblox.com/dashboard/creations" target="_blank" rel="noreferrer" style={{ color: "#38bdf8" }}>
+                create.roblox.com
+              </a>{" "}— Roblox doesn't offer an API to create one from scratch, or to list your
+              experiences automatically even when signed in. Paste the Place ID (or the game's
+              URL) above and the Universe ID auto-fills when possible.
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 18, padding: 16 }}>
+            <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 700 }}>What you get</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+              {[
+                "Gameplay systems and starter scripts",
+                "Monetization hooks and build-ready structure",
+                "Publishing guidance for Roblox Studio",
+              ].map((item) => (
+                <div key={item} style={{ display: "flex", alignItems: "center", gap: 8, color: "#94a3b8", fontSize: 13 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#ff4d6d" }} />
+                  <span>{item}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 18, padding: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <div>
+                <div style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 700 }}>Studio access</div>
+                <div style={{ color: "#64748b", fontSize: 12, marginTop: 2 }}>
+                  {oauthStatus.connected
+                    ? `Signed in as ${oauthStatus.user?.name || oauthStatus.user?.preferred_username || "Roblox user"}`
+                    : "Connect your Roblox account for publishing workflows"}
+                </div>
+              </div>
+              {oauthStatus.connected ? (
+                <button onClick={signOut} style={btnStyle(true)}>Sign out</button>
+              ) : (
+                <a href={`${API}/roblox/oauth/login`} style={{ ...btnStyle(true), textDecoration: "none" }}>Sign in</a>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {jobs.length > 0 && (
         <div>
           <div style={{ color: "#64748b", fontSize: 11, marginBottom: 8, fontWeight: 600, letterSpacing: 1 }}>JOBS</div>
@@ -1932,7 +2070,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
 function getInitialTab(): Tab {
   const params = new URLSearchParams(window.location.search);
   const t = params.get("tab");
-  return (t === "video" || t === "music" || t === "lumi" || t === "roblox" || t === "settings") ? t : "video";
+  return (t === "video" || t === "music" || t === "lumi" || t === "roblox" || t === "settings") ? t : "roblox";
 }
 
 export default function App() {
