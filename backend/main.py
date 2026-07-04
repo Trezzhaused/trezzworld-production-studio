@@ -8,6 +8,12 @@ from pydantic import BaseModel
 from .config import APP_NAME, VERSION
 from .meta_builder import build_meta_builder_status, continue_meta_builder
 from .meta_development import build_meta_development_status
+from .platform_vision import (
+    build_platform_vision_status,
+    get_brand_catalog,
+    get_public_api_surface,
+    schedule_liveops_event,
+)
 from .studio_control_plane import boot_studio_mission, build_studio_control_plane
 
 app = FastAPI(title=f"{APP_NAME} API", version=VERSION)
@@ -23,6 +29,32 @@ app.add_middleware(
 @app.get("/api/status")
 def status():
     return {"status": "running", "version": VERSION}
+
+
+@app.get("/api/platform/vision")
+def platform_vision_status():
+    return build_platform_vision_status()
+
+
+@app.get("/api/platform/brands")
+def platform_brands():
+    return get_brand_catalog()
+
+
+@app.get("/api/platform/public")
+def platform_public_surface():
+    return get_public_api_surface()
+
+
+class PlatformLiveOpsScheduleRequest(BaseModel):
+    brandId: str
+    event: dict[str, Any] | None = None
+
+
+@app.post("/api/platform/liveops/schedule")
+def platform_liveops_schedule(payload: PlatformLiveOpsScheduleRequest):
+    return schedule_liveops_event(payload.brandId, payload.event)
+
 
 @app.get("/api/debug/ffmpeg")
 def debug_ffmpeg():
