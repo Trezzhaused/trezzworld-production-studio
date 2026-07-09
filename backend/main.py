@@ -1,11 +1,16 @@
+import asyncio
+import json
 import os
 import shutil
+import time
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Header, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from starlette.requests import Request
 from pydantic import BaseModel
 from .config import APP_NAME, VERSION
 from .company_vision import (
@@ -45,8 +50,32 @@ app.add_middleware(
 )
 
 
+def _sanitize_lumi_output(content: str | None) -> str:
+    if not content:
+        return ""
+    lines: list[str] = []
+    in_traceback = False
+    for line in str(content).splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Traceback (most recent call last):"):
+            in_traceback = True
+            continue
+        if in_traceback:
+            if not stripped or stripped.startswith("File ") or stripped.startswith("Exception") or stripped.startswith("Error"):
+                continue
+            in_traceback = False
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
 def _config_status() -> dict[str, Any]:
     ffmpeg_path = os.environ.get("FFMPEG_PATH") or shutil.which("ffmpeg")
+    auth_required = os.environ.get("AUTH_REQUIRED", "false").lower() in {"1", "true", "yes", "on"}
+    api_key_configured = bool(os.environ.get("LUMI_API_KEY", "").strip())
+    try:
+        rate_limit = int(os.environ.get("LUMI_RATE_LIMIT_PER_MINUTE", "60"))
+    except ValueError:
+        rate_limit = 60
     optional_keys = {
         "HUGGINGFACE_API_KEY": "Photorealistic image/video generation",
         "FAL_KEY": "Fal.ai video fallback",
@@ -69,27 +98,73 @@ def _config_status() -> dict[str, Any]:
         checks.append({"key": key, "required": False, "configured": bool(os.environ.get(key)), "purpose": purpose})
 
     missing_required = [item["key"] for item in checks if item["required"] and not item["configured"]]
+    warnings = [
+        "Install ffmpeg and ensure it is on PATH or set FFMPEG_PATH to make video/audio generation work end-to-end.",
+    ] if not ffmpeg_path else []
+    if auth_required and not api_key_configured:
+        warnings.append("AUTH_REQUIRED is enabled but no LUMI_API_KEY is configured; authenticated requests will fail until a key or SSO token is available.")
     return {
-        "ok": not missing_required and bool(ffmpeg_path),
+        "ok": not missing_required and bool(ffmpeg_path) and (not auth_required or api_key_configured),
         "ffmpeg": {
             "configured": bool(ffmpeg_path),
             "path": ffmpeg_path,
         },
+        "auth": {
+            "required": auth_required,
+            "apiKeyConfigured": api_key_configured,
+            "rateLimitPerMinute": rate_limit,
+        },
         "required": checks[:len(required_keys)],
         "optional": checks[len(required_keys):],
         "missingRequired": missing_required,
-        "warnings": [
-            "Install ffmpeg and ensure it is on PATH or set FFMPEG_PATH to make video/audio generation work end-to-end.",
-        ] if not ffmpeg_path else [],
+        "warnings": warnings,
     }
 
 
-app.add_middleware(
-    CORSMiddleware,
- allow_origins=["*"],
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
-)
+RATE_LIMIT_BUCKETS: dict[tuple[str, str], list[float]] = defaultdict(list)
+
+
+@app.middleware("http")
+async def enforce_lumi_security(request: Request, call_next):
+    path = request.url.path
+    if path in {"/api/lumi/chat", "/api/lumi/stream"}:
+        if _is_rate_limited(request):
+            return JSONResponse({"detail": "Rate limit exceeded."}, status_code=429)
+        if not _is_authenticated(request, request.headers.get("authorization")):
+            return JSONResponse({"detail": "Authentication required."}, status_code=401)
+    return await call_next(request)
+
+
+def _get_client_id(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _is_rate_limited(request: Request) -> bool:
+    limit = int(os.environ.get("LUMI_RATE_LIMIT_PER_MINUTE", "60"))
+    now = time.time()
+    bucket = RATE_LIMIT_BUCKETS[(request.url.path, _get_client_id(request))]
+    bucket[:] = [timestamp for timestamp in bucket if now - timestamp < 60]
+    if len(bucket) >= limit:
+        return True
+    bucket.append(now)
+    return False
+
+
+def _is_authenticated(request: Request, authorization_header: str | None = None) -> bool:
+    if os.environ.get("AUTH_REQUIRED", "false").lower() not in {"1", "true", "yes", "on"}:
+        return True
+    api_key = os.environ.get("LUMI_API_KEY", "").strip()
+    if api_key:
+        if authorization_header == api_key or request.headers.get("x-api-key") == api_key:
+            return True
+    from .trezzhaus_auth import get_session, read_bearer_token  # noqa: PLC0415
+    token = read_bearer_token(authorization_header)
+    if token:
+        return get_session(token) is not None
+    return False
 
 
 @app.get("/api/status")
@@ -100,6 +175,19 @@ def status():
 @app.get("/api/config/status")
 def config_status():
     return _config_status()
+
+
+@app.get("/api/health")
+def health():
+    return {
+        "ok": _config_status()["ok"],
+        "service": "running",
+        "version": VERSION,
+        "checks": {
+            "config": _config_status(),
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        },
+    }
 
 
 @app.get("/api/platform/vision")
@@ -261,13 +349,7 @@ class LumiChatRequest(BaseModel):
     domain: str | None = None
 
 
-@app.post("/api/lumi/chat")
-def lumi_chat(payload: LumiChatRequest, authorization: str | None = Header(default=None)):
-    """
-    Chat with LUMI. Stores conversation in MissionStore and returns AI response.
-    Supports OpenRouter cascade AND local Ollama (SuperGemma 26B / Gemma 27B).
-    Set useOllama=true to route through local Ollama.
-    """
+def _run_lumi_chat(payload: LumiChatRequest, authorization: str | None = None) -> dict[str, Any]:
     from datetime import datetime, timezone  # noqa: PLC0415
     from .ai_router import get_router  # noqa: PLC0415
     from .mission_store import MissionStore  # noqa: PLC0415
@@ -276,7 +358,6 @@ def lumi_chat(payload: LumiChatRequest, authorization: str | None = Header(defau
     store = MissionStore()
     now = datetime.now(timezone.utc).isoformat()
 
-    # Persist user message
     store.add_chat(
         role="user",
         content=payload.message,
@@ -284,15 +365,11 @@ def lumi_chat(payload: LumiChatRequest, authorization: str | None = Header(defau
         mission_id=payload.missionId,
     )
 
-    # Retrieve recent history from DB if not provided
     history = payload.history
     if history is None and payload.missionId:
         db_history = store.get_chat_history(payload.missionId, limit=20)
         history = [{"role": h["role"], "content": h["content"]} for h in db_history[:-1]]
 
-    # If the user is asking for visual output, actually generate a real image
-    # instead of letting the chat model hallucinate having "attached" one —
-    # plain chat completions have no file I/O of their own.
     image_id: str | None = None
     image_url_override: str | None = None
     image_note = ""
@@ -312,12 +389,6 @@ def lumi_chat(payload: LumiChatRequest, authorization: str | None = Header(defau
         else:
             image_note = "\n\n[No image-generation API key configured — add one in Settings to enable real image output.]"
 
-    # Owner mode: verified via SSO against the trezzhaus.com account system
-    # (trezzhaus_auth.py). Never grants LUMI any new execution ability — it
-    # only changes what she's allowed to say: for the verified owner, she may
-    # propose concrete infrastructure/capability changes (e.g. a Dockerfile
-    # diff) as a plan for a human to review and ship, instead of refusing or
-    # pretending she can do it herself.
     owner_note = ""
     from .trezzhaus_auth import read_bearer_token, get_session, is_owner  # noqa: PLC0415
     owner_mode = is_owner(get_session(read_bearer_token(authorization)))
@@ -340,10 +411,12 @@ def lumi_chat(payload: LumiChatRequest, authorization: str | None = Header(defau
         owner_mode=owner_mode,
     )
 
-    content = result.content if result.ok else result.content or f"LUMI is unavailable: {result.error}"
+    if result.ok:
+        content = _sanitize_lumi_output(result.content)
+    else:
+        content = "LUMI is unavailable. Please try again later."
     model_used = result.model if result.ok else "none"
 
-    # Persist LUMI response
     store.add_chat(
         role="assistant",
         content=content,
@@ -359,6 +432,33 @@ def lumi_chat(payload: LumiChatRequest, authorization: str | None = Header(defau
         "ok": result.ok,
         "imageUrl": image_url_override or (f"/api/lumi/export/{image_id}" if image_id else None),
     }
+
+
+@app.post("/api/lumi/chat")
+def lumi_chat(payload: LumiChatRequest, authorization: str | None = Header(default=None)):
+    return _run_lumi_chat(payload, authorization)
+
+
+@app.post("/api/lumi/stream")
+async def lumi_stream(payload: LumiChatRequest, authorization: str | None = Header(default=None)):
+    result = _run_lumi_chat(payload, authorization)
+    content = result.get("content", "") or ""
+
+    async def event_generator():
+        yield f"event: thinking\ndata: {json.dumps({'type': 'thinking', 'message': 'LUMI is live'})}\n\n"
+        if content:
+            chunk_size = max(1, min(24, len(content) // 24 or 1))
+            for start in range(0, len(content), chunk_size):
+                chunk = content[start:start + chunk_size]
+                await asyncio.sleep(0.01)
+                yield f"event: chunk\ndata: {json.dumps({'type': 'chunk', 'delta': chunk})}\n\n"
+        yield f"event: done\ndata: {json.dumps({'type': 'done', 'content': content, 'model': result.get('model'), 'ok': result.get('ok'), 'imageUrl': result.get('imageUrl')})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
 
 
 @app.get("/api/lumi/export/{image_id}")
@@ -421,7 +521,7 @@ def lumi_tools_image_filter(payload: LumiImageFilterRequest):
     try:
         result = apply_image_filter(src_path.read_bytes(), payload.operation, **params)
     except CreativeToolError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail="Upstream request failed.") from None
     job_id = save_output(result, "png")
     return {"imageUrl": f"/api/lumi/tools/export/{job_id}.png"}
 
@@ -445,7 +545,7 @@ def lumi_tools_cad(payload: LumiCadRequest):
     try:
         result = generate_cad_primitive(payload.shape, **dims)
     except CreativeToolError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail="Upstream request failed.") from None
     job_id = save_output(result, "stl")
     return {"modelUrl": f"/api/lumi/tools/export/{job_id}.stl"}
 
@@ -1166,7 +1266,7 @@ def roblox_game_publish(job_id: str, payload: RobloxPublishRequest):
             prefer_oauth=False,
         )
     except RobloxPublishError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="Request validation failed.") from None
 
     title = job.design_doc.get("title", job.concept[:60])
     place_xml = build_place_xml(title, job.scripts)
@@ -1174,7 +1274,7 @@ def roblox_game_publish(job_id: str, payload: RobloxPublishRequest):
     try:
         result = publish_place(place_xml, universe_id, place_id, **auth_kwargs)
     except RobloxPublishError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail="Upstream request failed.") from None
 
     return {
         "jobId": job_id,
@@ -1197,7 +1297,7 @@ def roblox_oauth_login():
     try:
         url = build_authorize_url()
     except RobloxOAuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="Request validation failed.") from None
     return RedirectResponse(url)
 
 
@@ -1273,7 +1373,7 @@ def roblox_create_game_pass(job_id: str, payload: RobloxMonetizationRequest):
         )
         result = create_game_pass(universe_id, payload.name, payload.price, payload.description, **auth_kwargs)
     except RobloxPublishError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail="Upstream request failed.") from None
     return result
 
 
@@ -1292,7 +1392,7 @@ def roblox_create_developer_product(job_id: str, payload: RobloxMonetizationRequ
         )
         result = create_developer_product(universe_id, payload.name, payload.price, payload.description, **auth_kwargs)
     except RobloxPublishError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail="Upstream request failed.") from None
     return result
 
 
@@ -1310,7 +1410,7 @@ def roblox_list_monetization(job_id: str):
         passes = list_game_passes(universe_id, **auth_kwargs)
         products = list_developer_products(universe_id, **auth_kwargs)
     except RobloxPublishError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail="Upstream request failed.") from None
     return {"gamePasses": passes, "developerProducts": products}
 
 

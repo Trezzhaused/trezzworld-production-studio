@@ -1991,13 +1991,22 @@ function LumiTab() {
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setSending(true);
+
+    let assistantIndex = -1;
+    let streamedText = "";
+    setMessages((prev) => {
+      const next = [...prev, { role: "assistant", content: "" }];
+      assistantIndex = next.length - 1;
+      return next;
+    });
+
     try {
       const token = getTrezzhausToken();
-      const res = await fetch(`${API}/lumi/chat`, {
+      const res = await fetch(`${API}/lumi/stream`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(token ? { Authorization: "Bearer " + token } : {}),
         },
         body: JSON.stringify({
           message: text,
@@ -2007,10 +2016,66 @@ function LumiTab() {
           domain,
         }),
       });
-      const data = await res.json();
-      setMessages((prev) => [...prev, { role: "assistant", content: data.content, model: data.model, imageUrl: data.imageUrl }]);
-    } catch (err) {
-      setMessages((prev) => [...prev, { role: "assistant", content: "LUMI is unreachable — check your connection." }]);
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || "LUMI stream failed.");
+      }
+      if (!res.body) throw new Error("LUMI stream unavailable.");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const payload = JSON.parse(trimmed.slice(5).trim());
+          if (payload.type === "chunk" && typeof payload.delta === "string") {
+            streamedText += payload.delta;
+            setMessages((prev) => prev.map((msg, idx) => idx === assistantIndex ? { ...msg, content: streamedText } : msg));
+          }
+          if (payload.type === "done") {
+            streamedText = payload.content ?? streamedText;
+            setMessages((prev) => prev.map((msg, idx) => idx === assistantIndex ? {
+              ...msg,
+              content: streamedText,
+              model: payload.model,
+              imageUrl: payload.imageUrl,
+            } : msg));
+          }
+        }
+      }
+
+      if (buffer.trim()) {
+        const trimmed = buffer.trim();
+        if (trimmed.startsWith("data:")) {
+          const payload = JSON.parse(trimmed.slice(5).trim());
+          if (payload.type === "chunk" && typeof payload.delta === "string") {
+            streamedText += payload.delta;
+            setMessages((prev) => prev.map((msg, idx) => idx === assistantIndex ? { ...msg, content: streamedText } : msg));
+          }
+          if (payload.type === "done") {
+            streamedText = payload.content ?? streamedText;
+            setMessages((prev) => prev.map((msg, idx) => idx === assistantIndex ? {
+              ...msg,
+              content: streamedText,
+              model: payload.model,
+              imageUrl: payload.imageUrl,
+            } : msg));
+          }
+        }
+      }
+    } catch (err: any) {
+      if (assistantIndex >= 0) {
+        setMessages((prev) => prev.map((msg, idx) => idx === assistantIndex ? { ...msg, content: err.message || "LUMI is unreachable — check your connection." } : msg));
+      }
     } finally {
       setSending(false);
     }
