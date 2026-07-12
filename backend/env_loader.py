@@ -7,6 +7,9 @@ from typing import Iterable
 from dotenv import load_dotenv
 
 
+LOADED_ENV_FILES: list[Path] = []
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
@@ -62,26 +65,27 @@ def bootstrap_environment() -> list[Path]:
     master configuration source for this repo.
     """
 
-    loaded: list[Path] = []
+    global LOADED_ENV_FILES
+    LOADED_ENV_FILES = []
     repo_root = _repo_root()
 
     local_candidates = [repo_root / ".env", repo_root / ".env.local", repo_root / ".env.production"]
     for path in local_candidates:
         if path.exists():
             load_dotenv(path, override=False)
-            loaded.append(path)
+            LOADED_ENV_FILES.append(path)
 
     explicit_paths = _explicit_env_paths()
     for path in explicit_paths:
         if path.exists():
             load_dotenv(path, override=True)
-            loaded.append(path)
+            LOADED_ENV_FILES.append(path)
 
     for path in _candidate_files():
-        if path in loaded:
+        if path in LOADED_ENV_FILES:
             continue
         if path.exists():
             load_dotenv(path, override=False)
-            loaded.append(path)
+            LOADED_ENV_FILES.append(path)
 
-    return loaded
+    return LOADED_ENV_FILES

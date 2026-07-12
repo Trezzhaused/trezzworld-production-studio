@@ -2186,6 +2186,7 @@ function LumiTab() {
 // ── App shell ─────────────────────────────────────────────────────────────────
 
 type Tab = "video" | "music" | "lumi" | "roblox" | "settings";
+type LegalView = "app" | "privacy" | "terms" | "contact" | "cookies";
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "video",    label: "Video",    icon: "🎬" },
@@ -2201,8 +2202,94 @@ function getInitialTab(): Tab {
   return (t === "video" || t === "music" || t === "lumi" || t === "roblox" || t === "settings") ? t : "roblox";
 }
 
+function getInitialLegalView(): LegalView {
+  const hash = window.location.hash.replace(/^#/, "");
+  return hash === "privacy" || hash === "terms" || hash === "contact" || hash === "cookies" ? hash : "app";
+}
+
+function getLegalTitle(view: LegalView) {
+  switch (view) {
+    case "privacy": return "Privacy policy";
+    case "terms": return "Terms of service";
+    case "contact": return "Contact";
+    case "cookies": return "Cookie notice";
+    default: return "Studio information";
+  }
+}
+
+function LegalPage({ view, onBack }: { view: LegalView; onBack: () => void }) {
+  const content = {
+    privacy: {
+      title: "Privacy policy",
+      body: "TrezzWorld Production Studio stores only the information needed to keep your workspace usable: local preferences, session IDs, and optional API keys configured through the Settings tab. We do not sell user data or use third-party tracking by default. If you enable external services or publish content, those providers may process your requests according to their own privacy terms.",
+      bullets: ["Local preference and session storage live in your browser.", "API keys entered in Settings are stored only in the environment or service configuration you choose.", "If you connect external publishing services, you remain responsible for reviewing their privacy policies."],
+    },
+    terms: {
+      title: "Terms of service",
+      body: "You may use TrezzWorld Production Studio for lawful creative work, prototyping, and publishing workflows. Do not upload or generate content that infringes the rights of others, includes malware, or targets users with abuse or spam.",
+      bullets: ["Respect copyright, trademarks, and platform rules when publishing generated assets.", "Be responsible for any outputs you distribute or monetize.", "The studio may be rate-limited or disabled if abuse or excessive usage is detected."],
+    },
+    contact: {
+      title: "Contact",
+      body: "Need help, want to collaborate, or have a launch issue? Reach out to the TrezzHaus team at hello@trezzhaus.com and include the project name and the exact workflow that is failing.",
+      bullets: ["Include screenshots or logs when reporting a bug.", "For production incidents, mention your environment and any recent deployment changes."],
+    },
+    cookies: {
+      title: "Cookie notice",
+      body: "This studio uses browser storage for a simple consent flag, tab state, and session continuity. No third-party analytics cookies are required for the core experience.",
+      bullets: ["Accepting cookies keeps the consent banner from showing again.", "Declining cookies still leaves the studio usable, but you may see the banner again on future visits."],
+    },
+  }[view];
+
+  return (
+    <div style={{ minHeight: "100vh", background: "linear-gradient(180deg, #020817 0%, #040d1e 100%)", color: "#e2e8f0", fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif", padding: 24 }}>
+      <div style={{ maxWidth: 900, margin: "0 auto", background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 18, padding: 24 }}>
+        <button onClick={onBack} style={{ ...btnStyle(true), marginBottom: 16 }}>← Back to studio</button>
+        <div style={{ color: "#38bdf8", fontSize: 12, fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase" }}>Launch-ready compliance</div>
+        <div style={{ color: "#e2e8f0", fontSize: 28, fontWeight: 800, marginTop: 6 }}>{content.title}</div>
+        <div style={{ color: "#94a3b8", fontSize: 14, lineHeight: 1.7, marginTop: 12 }}>{content.body}</div>
+        <ul style={{ color: "#94a3b8", lineHeight: 1.7, paddingLeft: 20, marginTop: 12 }}>
+          {content.bullets.map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>(getInitialTab());
+  const [legalView, setLegalView] = useState<LegalView>(getInitialLegalView());
+  const [cookieConsent, setCookieConsent] = useState<boolean | null>(() => {
+    if (typeof window === "undefined") return null;
+    const stored = window.localStorage.getItem("trezzworld_cookie_consent");
+    return stored ? stored === "accepted" : null;
+  });
+
+  useEffect(() => {
+    const onHashChange = () => {
+      setLegalView(getInitialLegalView());
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  const openLegalView = (view: LegalView) => {
+    setLegalView(view);
+    if (view === "app") {
+      window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}`);
+      return;
+    }
+    window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}#${view}`);
+  };
+
+  const setCookieChoice = (choice: boolean) => {
+    window.localStorage.setItem("trezzworld_cookie_consent", choice ? "accepted" : "declined");
+    setCookieConsent(choice);
+  };
+
+  if (legalView !== "app") {
+    return <LegalPage view={legalView} onBack={() => openLegalView("app")} />;
+  }
 
   return (
     <div style={{
@@ -2213,6 +2300,23 @@ export default function App() {
       display: "flex",
       flexDirection: "column",
     }}>
+      {cookieConsent === null && (
+        <div style={{
+          borderBottom: "1px solid #1e3a5f",
+          padding: "12px 24px",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          gap: 12, flexWrap: "wrap", background: "#0a0f1a",
+        }}>
+          <div style={{ color: "#94a3b8", fontSize: 13, maxWidth: 760 }}>
+            This studio uses browser storage for a simple consent flag and session continuity. No third-party tracking cookies are required for the core experience.
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => setCookieChoice(false)} style={{ ...btnStyle(true), background: "#0f172a", color: "#94a3b8" }}>Decline</button>
+            <button onClick={() => setCookieChoice(true)} style={btnStyle(true)}>Accept</button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div style={{
         borderBottom: "1px solid #0f172a",
@@ -2232,7 +2336,7 @@ export default function App() {
         </div>
 
         {/* Tab bar */}
-        <div style={{ display: "flex", gap: 4 }}>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -2258,6 +2362,13 @@ export default function App() {
         {tab === "lumi" && <LumiTab />}
         {tab === "roblox" && <RobloxTab />}
         {tab === "settings" && <SettingsTab />}
+      </div>
+
+      <div style={{ borderTop: "1px solid #0f172a", padding: "16px 24px", display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center", background: "#020817cc" }}>
+        <button onClick={() => openLegalView("privacy")} style={{ ...btnStyle(true), background: "transparent", border: "1px solid #1e3a5f", color: "#94a3b8" }}>Privacy</button>
+        <button onClick={() => openLegalView("terms")} style={{ ...btnStyle(true), background: "transparent", border: "1px solid #1e3a5f", color: "#94a3b8" }}>Terms</button>
+        <button onClick={() => openLegalView("contact")} style={{ ...btnStyle(true), background: "transparent", border: "1px solid #1e3a5f", color: "#94a3b8" }}>Contact</button>
+        <button onClick={() => openLegalView("cookies")} style={{ ...btnStyle(true), background: "transparent", border: "1px solid #1e3a5f", color: "#94a3b8" }}>Cookies</button>
       </div>
     </div>
   );

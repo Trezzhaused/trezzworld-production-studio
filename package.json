@@ -15,7 +15,8 @@
     "backend:dev": "python -m uvicorn backend.main:app --reload --port 8000",
     "dev:web": "vite",
     "build:web": "vite build",
-    "test": "python -m unittest discover -s backend/tests"
+    "test": "python -m unittest discover -s backend/tests",
+    "smoke:deploy": "bash ./scripts/deploy-smoke-test.sh http://127.0.0.1:8000"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",

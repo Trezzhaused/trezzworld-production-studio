@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import shutil
 import time
@@ -24,6 +25,7 @@ from .company_vision import (
 )
 from .meta_builder import build_meta_builder_status, continue_meta_builder
 from .meta_development import build_meta_development_status
+from .ops import build_ops_status
 from .platform_vision import (
     build_platform_vision_status,
     get_brand_catalog,
@@ -31,6 +33,7 @@ from .platform_vision import (
     schedule_liveops_event,
 )
 from .studio_control_plane import boot_studio_mission, build_studio_control_plane
+from .env_loader import LOADED_ENV_FILES
 
 def _cors_origins() -> list[str]:
     raw = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
@@ -39,6 +42,7 @@ def _cors_origins() -> list[str]:
 
 
 app = FastAPI(title=f"{APP_NAME} API", version=VERSION)
+logger = logging.getLogger(__name__)
 
 
 app.add_middleware(
@@ -70,7 +74,7 @@ def _sanitize_lumi_output(content: str | None) -> str:
 
 def _config_status() -> dict[str, Any]:
     ffmpeg_path = os.environ.get("FFMPEG_PATH") or shutil.which("ffmpeg")
-    auth_required = os.environ.get("AUTH_REQUIRED", "false").lower() in {"1", "true", "yes", "on"}
+    auth_required = os.environ.get("AUTH_REQUIRED", "true").lower() in {"1", "true", "yes", "on"}
     api_key_configured = bool(os.environ.get("LUMI_API_KEY", "").strip())
     try:
         rate_limit = int(os.environ.get("LUMI_RATE_LIMIT_PER_MINUTE", "60"))
@@ -98,6 +102,13 @@ def _config_status() -> dict[str, Any]:
         checks.append({"key": key, "required": False, "configured": bool(os.environ.get(key)), "purpose": purpose})
 
     missing_required = [item["key"] for item in checks if item["required"] and not item["configured"]]
+    master_file_configured = bool(
+        os.environ.get("MASTER_FILE")
+        or os.environ.get("MASTER_ENV_FILE")
+        or os.environ.get("SHARED_ENV_FILE")
+        or os.environ.get("ENV_FILE")
+        or os.environ.get("DOTENV_PATH")
+    )
     warnings = [
         "Install ffmpeg and ensure it is on PATH or set FFMPEG_PATH to make video/audio generation work end-to-end.",
     ] if not ffmpeg_path else []
@@ -117,6 +128,20 @@ def _config_status() -> dict[str, Any]:
         "required": checks[:len(required_keys)],
         "optional": checks[len(required_keys):],
         "missingRequired": missing_required,
+        "masterFile": {
+            "configured": master_file_configured,
+            "loadedFiles": [str(path) for path in LOADED_ENV_FILES],
+        },
+        "lumi": {
+            "routerConfigured": bool(os.environ.get("OPENROUTER_API_KEY")),
+            "memoryEnabled": True,
+            "masterFileConfigured": master_file_configured,
+        },
+        "launchReadiness": {
+            "deploymentSmokeTest": True,
+            "observabilityConfigured": bool(os.environ.get("SENTRY_DSN") or os.environ.get("LOGTAIL_TOKEN") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")),
+            "compliancePages": True,
+        },
         "warnings": warnings,
     }
 
@@ -154,7 +179,7 @@ def _is_rate_limited(request: Request) -> bool:
 
 
 def _is_authenticated(request: Request, authorization_header: str | None = None) -> bool:
-    if os.environ.get("AUTH_REQUIRED", "false").lower() not in {"1", "true", "yes", "on"}:
+    if os.environ.get("AUTH_REQUIRED", "true").lower() not in {"1", "true", "yes", "on"}:
         return True
     api_key = os.environ.get("LUMI_API_KEY", "").strip()
     if api_key:
@@ -188,6 +213,11 @@ def health():
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         },
     }
+
+
+@app.get("/api/ops/status")
+def ops_status():
+    return build_ops_status()
 
 
 @app.get("/api/platform/vision")
@@ -436,23 +466,36 @@ def _run_lumi_chat(payload: LumiChatRequest, authorization: str | None = None) -
 
 @app.post("/api/lumi/chat")
 def lumi_chat(payload: LumiChatRequest, authorization: str | None = Header(default=None)):
-    return _run_lumi_chat(payload, authorization)
+    try:
+        return _run_lumi_chat(payload, authorization)
+    except Exception:
+        logger.exception("LUMI chat request failed")
+        return JSONResponse({"detail": "LUMI is unavailable. Please try again later."}, status_code=502)
 
 
 @app.post("/api/lumi/stream")
 async def lumi_stream(payload: LumiChatRequest, authorization: str | None = Header(default=None)):
-    result = _run_lumi_chat(payload, authorization)
+    try:
+        result = _run_lumi_chat(payload, authorization)
+    except Exception:
+        logger.exception("LUMI stream request failed")
+        return JSONResponse({"detail": "LUMI is unavailable. Please try again later."}, status_code=502)
+
     content = result.get("content", "") or ""
 
     async def event_generator():
-        yield f"event: thinking\ndata: {json.dumps({'type': 'thinking', 'message': 'LUMI is live'})}\n\n"
-        if content:
-            chunk_size = max(1, min(24, len(content) // 24 or 1))
-            for start in range(0, len(content), chunk_size):
-                chunk = content[start:start + chunk_size]
-                await asyncio.sleep(0.01)
-                yield f"event: chunk\ndata: {json.dumps({'type': 'chunk', 'delta': chunk})}\n\n"
-        yield f"event: done\ndata: {json.dumps({'type': 'done', 'content': content, 'model': result.get('model'), 'ok': result.get('ok'), 'imageUrl': result.get('imageUrl')})}\n\n"
+        try:
+            yield f"event: thinking\ndata: {json.dumps({'type': 'thinking', 'message': 'LUMI is live'})}\n\n"
+            if content:
+                chunk_size = max(1, min(24, len(content) // 24 or 1))
+                for start in range(0, len(content), chunk_size):
+                    chunk = content[start:start + chunk_size]
+                    await asyncio.sleep(0.01)
+                    yield f"event: chunk\ndata: {json.dumps({'type': 'chunk', 'delta': chunk})}\n\n"
+            yield f"event: done\ndata: {json.dumps({'type': 'done', 'content': content, 'model': result.get('model'), 'ok': result.get('ok'), 'imageUrl': result.get('imageUrl')})}\n\n"
+        except Exception:
+            logger.exception("LUMI stream generation failed")
+            yield f"event: error\ndata: {json.dumps({'type': 'error', 'detail': 'LUMI is unavailable. Please try again later.'})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -1444,8 +1487,9 @@ def roblox_auto_monetization(job_id: str, payload: RobloxAutoMonetizationRequest
             place_id=payload.placeId,
             cohort=payload.cohort,
         )
-    except Exception as exc:  # pragma: no cover - defensive guard against upstream failures
-        raise HTTPException(status_code=502, detail="Monetization asset creation failed.") from None
+    except Exception:  # pragma: no cover - defensive guard against upstream failures
+        logger.exception("Roblox monetization asset creation failed")
+        return JSONResponse({"detail": "Monetization asset creation failed."}, status_code=502)
 
 
 @app.post("/api/roblox/analytics")

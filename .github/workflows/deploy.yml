@@ -41,6 +41,28 @@ jobs:
       - name: Build application
         run: npm run build
 
+      - name: Start backend for smoke tests
+        run: |
+          python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 > /tmp/trezzworld-backend.log 2>&1 &
+          echo $! > /tmp/trezzworld-backend.pid
+
+      - name: Run deployment smoke tests
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --location http://127.0.0.1:8000/api/health >/tmp/health.json 2>/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          bash ./scripts/deploy-smoke-test.sh http://127.0.0.1:8000
+
+      - name: Stop backend smoke test server
+        if: always()
+        run: |
+          if [ -f /tmp/trezzworld-backend.pid ]; then
+            kill $(cat /tmp/trezzworld-backend.pid) || true
+          fi
+
       # ── 3. Install Railway CLI ─────────────────────────────────────────────
       - name: Install Railway CLI
         run: npm install -g @railway/cli
@@ -108,3 +130,6 @@ jobs:
           echo
           echo "Checking $TARGET_URL/api/config/status"
           curl --fail --silent --show-error --location --retry 8 --retry-delay 10 --retry-all-errors "$TARGET_URL/api/config/status"
+          echo
+          echo "Checking $TARGET_URL/api/ops/status"
+          curl --fail --silent --show-error --location --retry 8 --retry-delay 10 --retry-all-errors "$TARGET_URL/api/ops/status"
