@@ -1,0 +1,54 @@
+{
+  "title": "TrezzWorld Studio Master Document",
+  "product": "TrezzBLOX Studio Creator",
+  "summary": "Shared blueprint for studio.trezzhaus.com, trezzworld-studio-production, and the TrezzWorld Production Studio runtime.",
+  "mission": "Turn prompts into launch-ready Roblox experiences and studio operations using a shared master layer.",
+  "domains": [
+    "studio.trezzhaus.com",
+    "trezzworld-studio-production",
+    "trezzworld-production-studio"
+  ],
+  "repositories": [
+    "trezzworld-production-studio",
+    "studio.trezzhaus.com",
+    "trezzworld-studio-production"
+  ],
+  "workstreams": [
+    {
+      "name": "Studio Creator",
+      "focus": "Prompt-to-experience generation, Luau packaging, live Studio sync, and publishing workflow."
+    },
+    {
+      "name": "Launch & Deployment",
+      "focus": "Shared env/master-file support, deployment smoke tests, and Railway rollout."
+    },
+    {
+      "name": "Brand & Platform",
+      "focus": "Brand catalogs, franchise systems, launch strategy, and partnership playbooks."
+    },
+    {
+      "name": "Master Layer",
+      "focus": "Unified document ingestion, repo mapping, and cross-repo handoff for production use."
+    }
+  ],
+  "capabilities": [
+    "Prompt-driven Roblox experience creation",
+    "Luau packaging and Rojo-compatible export",
+    "Studio live sync and publishing workflows",
+    "Monetization setup and Roblox Open Cloud integration",
+    "Shared master-document and deployment integration"
+  ],
+  "launchChecklist": [
+    "Confirm the shared master document is reachable from the deployment environment.",
+    "Validate the Roblox OAuth, publishing, and monetization flow before public launch.",
+    "Keep the master layer aligned with studio.trezzhaus.com and trezzworld-studio-production rollout plans."
+  ],
+  "sources": [
+    "backend/company_vision.py",
+    "backend/platform_vision.py",
+    "backend/studio_control_plane.py",
+    "app/react/App.tsx",
+    "backend/main.py",
+    "docs/master-document.json"
+  ]
+}

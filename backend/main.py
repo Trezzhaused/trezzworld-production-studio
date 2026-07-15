@@ -33,6 +33,7 @@ from .platform_vision import (
     schedule_liveops_event,
 )
 from .studio_control_plane import boot_studio_mission, build_studio_control_plane
+from .master_document import build_master_document_status
 from .env_loader import LOADED_ENV_FILES
 
 def _cors_origins() -> list[str]:
@@ -56,7 +57,7 @@ app.add_middleware(
 
 @app.exception_handler(Exception)
 async def handle_unexpected_exception(request: Request, exc: Exception):
-    logger.error("Unhandled exception for %s %s", request.method, request.url.path)
+    logger.error("Unhandled exception for %s %s", request.method, request.url.path, exc_info=False)
     return JSONResponse({"detail": "Internal server error."}, status_code=500)
 
 
@@ -116,6 +117,7 @@ def _config_status() -> dict[str, Any]:
         or os.environ.get("DOTENV_PATH")
     )
     launch_ready = not missing_required and bool(ffmpeg_path) and (not auth_required or api_key_configured)
+    master_document = build_master_document_status()
     warnings = [
         "Install ffmpeg and ensure it is on PATH or set FFMPEG_PATH to make video/audio generation work end-to-end.",
     ] if not ffmpeg_path else []
@@ -149,6 +151,18 @@ def _config_status() -> dict[str, Any]:
         "masterFile": {
             "configured": master_file_configured,
             "loadedFiles": [str(path) for path in LOADED_ENV_FILES],
+        },
+        "masterDocument": {
+            "ready": master_document["ready"],
+            "source": master_document["source"],
+            "format": master_document["format"],
+            "title": master_document["title"],
+            "summary": master_document["summary"],
+            "domains": master_document["domains"],
+            "repositories": master_document["repositories"],
+            "workstreams": master_document["workstreams"],
+            "launchChecklist": master_document["launchChecklist"],
+            "warnings": master_document["warnings"],
         },
         "lumi": {
             "routerConfigured": bool(os.environ.get("OPENROUTER_API_KEY")),
@@ -227,17 +241,35 @@ def status():
 
 @app.get("/api/config/status")
 def config_status():
-    return _config_status()
+    try:
+        return _config_status()
+    except Exception:
+        logger.error("Config status request failed", exc_info=False)
+        return JSONResponse({"detail": "Service unavailable."}, status_code=500)
+
+
+@app.get("/api/master-document")
+def master_document_status():
+    try:
+        return build_master_document_status()
+    except Exception:
+        logger.error("Master document request failed", exc_info=False)
+        return JSONResponse({"detail": "Service unavailable."}, status_code=500)
 
 
 @app.get("/api/health")
 def health():
+    try:
+        config = _config_status()
+    except Exception:
+        logger.error("Health check request failed", exc_info=False)
+        return JSONResponse({"detail": "Service unavailable."}, status_code=500)
     return {
-        "ok": _config_status()["ok"],
+        "ok": config["ok"],
         "service": "running",
         "version": VERSION,
         "checks": {
-            "config": _config_status(),
+            "config": config,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         },
     }
@@ -497,7 +529,7 @@ def lumi_chat(payload: LumiChatRequest, authorization: str | None = Header(defau
     try:
         return _run_lumi_chat(payload, authorization)
     except Exception:
-        logger.error("LUMI chat request failed")
+        logger.error("LUMI chat request failed", exc_info=False)
         return JSONResponse({"detail": "LUMI is unavailable. Please try again later."}, status_code=502)
 
 
@@ -506,7 +538,7 @@ async def lumi_stream(payload: LumiChatRequest, authorization: str | None = Head
     try:
         result = _run_lumi_chat(payload, authorization)
     except Exception:
-        logger.error("LUMI stream request failed")
+        logger.error("LUMI stream request failed", exc_info=False)
         return JSONResponse({"detail": "LUMI is unavailable. Please try again later."}, status_code=502)
 
     content = result.get("content", "") or ""
@@ -522,7 +554,7 @@ async def lumi_stream(payload: LumiChatRequest, authorization: str | None = Head
                     yield f"event: chunk\ndata: {json.dumps({'type': 'chunk', 'delta': chunk})}\n\n"
             yield f"event: done\ndata: {json.dumps({'type': 'done', 'content': content, 'model': result.get('model'), 'ok': result.get('ok'), 'imageUrl': result.get('imageUrl')})}\n\n"
         except Exception:
-            logger.error("LUMI stream generation failed")
+            logger.error("LUMI stream generation failed", exc_info=False)
             yield f"event: error\ndata: {json.dumps({'type': 'error', 'detail': 'LUMI is unavailable. Please try again later.'})}\n\n"
 
     return StreamingResponse(
@@ -1516,7 +1548,7 @@ def roblox_auto_monetization(job_id: str, payload: RobloxAutoMonetizationRequest
             cohort=payload.cohort,
         )
     except Exception:  # pragma: no cover - defensive guard against upstream failures
-        logger.error("Roblox monetization asset creation failed")
+        logger.error("Roblox monetization asset creation failed", exc_info=False)
         return JSONResponse({"detail": "Monetization asset creation failed."}, status_code=502)
 
 

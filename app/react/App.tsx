@@ -1159,6 +1159,7 @@ function SettingsTab() {
   const [message, setMessage] = useState("");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
+  const [masterDocument, setMasterDocument] = useState<any>(null);
 
   const load = async () => {
     try {
@@ -1171,6 +1172,13 @@ function SettingsTab() {
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    fetch(`${API}/master-document`)
+      .then((res) => res.json())
+      .then(setMasterDocument)
+      .catch(() => setMasterDocument(null));
+  }, []);
 
   const save = async (provider: string) => {
     const apiKey = (drafts[provider] || "").trim();
@@ -1210,6 +1218,29 @@ function SettingsTab() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 720 }}>
       <AccountSection />
+
+      {masterDocument && (
+        <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 8, padding: 14 }}>
+          <div style={{ color: "#e2e8f0", fontSize: 15, fontWeight: 700, marginBottom: 6 }}>
+            🧭 Master document layer
+          </div>
+          <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 8 }}>{masterDocument.summary}</div>
+          <div style={{ color: "#38bdf8", fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{masterDocument.title}</div>
+          <div style={{ color: "#64748b", fontSize: 11, marginBottom: 8 }}>
+            Domains: {masterDocument.domains?.join(", ") || "n/a"}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {masterDocument.workstreams?.slice(0, 3).map((item: any, index: number) => (
+              <span key={`${item.name}-${index}`} style={{ background: "#0f172a", border: "1px solid #1e3a5f", borderRadius: 999, padding: "4px 8px", color: "#94a3b8", fontSize: 10 }}>
+                {item.name}
+              </span>
+            ))}
+          </div>
+          {masterDocument.source && (
+            <div style={{ color: "#475569", fontSize: 10, marginTop: 8 }}>Source: {masterDocument.source}</div>
+          )}
+        </div>
+      )}
 
       <div>
         <div style={{ color: "#e2e8f0", fontSize: 16, fontWeight: 700, marginBottom: 4 }}>
