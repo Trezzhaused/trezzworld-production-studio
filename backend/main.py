@@ -56,7 +56,7 @@ app.add_middleware(
 
 @app.exception_handler(Exception)
 async def handle_unexpected_exception(request: Request, exc: Exception):
-    logger.exception("Unhandled exception for %s %s", request.method, request.url.path)
+    logger.error("Unhandled exception for %s %s", request.method, request.url.path)
     return JSONResponse({"detail": "Internal server error."}, status_code=500)
 
 
@@ -497,7 +497,7 @@ def lumi_chat(payload: LumiChatRequest, authorization: str | None = Header(defau
     try:
         return _run_lumi_chat(payload, authorization)
     except Exception:
-        logger.exception("LUMI chat request failed")
+        logger.error("LUMI chat request failed")
         return JSONResponse({"detail": "LUMI is unavailable. Please try again later."}, status_code=502)
 
 
@@ -506,7 +506,7 @@ async def lumi_stream(payload: LumiChatRequest, authorization: str | None = Head
     try:
         result = _run_lumi_chat(payload, authorization)
     except Exception:
-        logger.exception("LUMI stream request failed")
+        logger.error("LUMI stream request failed")
         return JSONResponse({"detail": "LUMI is unavailable. Please try again later."}, status_code=502)
 
     content = result.get("content", "") or ""
@@ -522,7 +522,7 @@ async def lumi_stream(payload: LumiChatRequest, authorization: str | None = Head
                     yield f"event: chunk\ndata: {json.dumps({'type': 'chunk', 'delta': chunk})}\n\n"
             yield f"event: done\ndata: {json.dumps({'type': 'done', 'content': content, 'model': result.get('model'), 'ok': result.get('ok'), 'imageUrl': result.get('imageUrl')})}\n\n"
         except Exception:
-            logger.exception("LUMI stream generation failed")
+            logger.error("LUMI stream generation failed")
             yield f"event: error\ndata: {json.dumps({'type': 'error', 'detail': 'LUMI is unavailable. Please try again later.'})}\n\n"
 
     return StreamingResponse(
@@ -1516,7 +1516,7 @@ def roblox_auto_monetization(job_id: str, payload: RobloxAutoMonetizationRequest
             cohort=payload.cohort,
         )
     except Exception:  # pragma: no cover - defensive guard against upstream failures
-        logger.exception("Roblox monetization asset creation failed")
+        logger.error("Roblox monetization asset creation failed")
         return JSONResponse({"detail": "Monetization asset creation failed."}, status_code=502)
 
 
