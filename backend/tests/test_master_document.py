@@ -50,6 +50,20 @@ class MasterDocumentTests(unittest.TestCase):
             self.assertEqual(document["summary"], "This document lives in a shared repo.")
             self.assertEqual(document["source"], str(path))
 
+    def test_load_master_document_reads_repo_name_from_master_document_repos(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            sibling_repo = repo_root / "trezzworld-studio-production"
+            sibling_repo.mkdir()
+            path = sibling_repo / "master-document.md"
+            path.write_text("# Shared Repo Notes\n\nA sibling repo doc.\n", encoding="utf-8")
+            with patch.dict(os.environ, {"MASTER_DOCUMENT_REPOS": "trezzworld-studio-production"}, clear=False):
+                document = load_master_document(repo_root)
+
+            self.assertEqual(document["title"], "Shared Repo Notes")
+            self.assertEqual(document["summary"], "A sibling repo doc.")
+            self.assertEqual(document["source"], str(path))
+
 
 if __name__ == "__main__":
     unittest.main()

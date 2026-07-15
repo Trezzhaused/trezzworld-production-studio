@@ -34,17 +34,28 @@ def _expand_path(path_value: str, repo_root: Path | None = None) -> Path:
     return path
 
 
+def _candidate_repo_locations(path_value: str, repo_root: Path) -> list[Path]:
+    base = Path(path_value).expanduser()
+    if base.is_absolute():
+        return [base]
+    prefixes = [repo_root, repo_root.parent, Path.cwd()]
+    return [(prefix / base).resolve() for prefix in prefixes]
+
+
 def _extra_repo_paths(repo_root: Path | None = None) -> list[Path]:
     repo_root = repo_root or _repo_root()
     paths: list[Path] = []
+    seen: set[Path] = set()
     raw = os.environ.get("MASTER_DOCUMENT_REPOS", "")
     for item in raw.split(","):
         value = item.strip()
         if not value:
             continue
-        path = _expand_path(value, repo_root)
-        if path not in paths:
-            paths.append(path)
+        for candidate in _candidate_repo_locations(value, repo_root):
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            paths.append(candidate)
     return paths
 
 
@@ -115,20 +126,33 @@ def discover_master_document(repo_root: Path | None = None) -> Path | None:
 def _normalize_text_document(path: Path, text: str) -> dict[str, Any]:
     title = path.stem.replace("-", " ").replace("_", " ").title()
     summary = ""
+    headings: list[str] = []
+    preview: list[str] = []
     for line in text.splitlines():
         candidate = line.strip()
         if not candidate:
             continue
         if candidate.startswith("#"):
-            title = re.sub(r"^#+\s*", "", candidate).strip() or title
+            heading = re.sub(r"^#+\s*", "", candidate).strip()
+            if heading:
+                headings.append(heading)
+            title = heading or title
             continue
-        if candidate and not candidate.startswith("<!--"):
+        if candidate.startswith("<!--"):
+            continue
+        if candidate.startswith("- ") or candidate.startswith("* "):
+            preview.append(candidate[2:].strip())
+            continue
+        if not summary:
             summary = candidate
-            break
+        if not preview:
+            preview.append(candidate)
     return {
         "title": title,
         "summary": summary or "Shared master document loaded from an external repo or docs folder.",
         "content": text,
+        "contentPreview": preview[:8],
+        "sections": headings[:8],
     }
 
 
@@ -166,6 +190,7 @@ def _build_generated_master_document(repo_root: Path | None = None) -> dict[str,
             "and the TrezzBLOX creator workflow."
         ),
         "product": "TrezzBLOX Studio Creator",
+        "productSummary": "Prompt-first Roblox experience creation for creators, agencies, and brand teams.",
         "domains": ["studio.trezzhaus.com", "trezzworld-studio-production", "trezzworld-production-studio"],
         "repositories": [
             "trezzworld-production-studio",
@@ -174,6 +199,43 @@ def _build_generated_master_document(repo_root: Path | None = None) -> dict[str,
         ],
         "mission": company["mission"],
         "vision": company["vision"],
+        "positioning": {
+            "headline": "Turn rough concepts into launch-ready Roblox experiences without losing product, marketing, or deployment alignment.",
+            "tagline": "From prompt to playable experience, with reusable launch storytelling across every surface.",
+            "audience": ["Roblox creators", "Brand and marketing teams", "Studio operators"],
+            "proofPoints": [
+                "Prompt-to-experience generation and Luau packaging",
+                "Shared master document and cross-repo launch orchestration",
+                "Studio sync, publishing, and monetization workflows",
+            ],
+        },
+        "launchPlan": {
+            "phases": [
+                {"name": "Pre-launch", "focus": "Confirm shared docs, deployment readiness, and launch checklist completion."},
+                {"name": "Soft launch", "focus": "Validate creator onboarding, publishing, and first-party marketing runs."},
+                {"name": "Scale", "focus": "Expand into community launches, partner campaigns, and live operations."},
+            ],
+            "channels": [
+                "Studio.trezzhaus.com product experience",
+                "TrezzHaus launch updates",
+                "Creator community channels",
+                "Product marketing landing pages",
+            ],
+            "successMetrics": [
+                "Shared document adoption across repos",
+                "Creator activation from first prompt to first publish",
+                "Launch checklist completion",
+                "Publishing success rate",
+            ],
+        },
+        "marketing": {
+            "narrative": [
+                "Turn a rough concept into a publishable Roblox experience in one loop.",
+                "Keep product, launch, and community messaging aligned via one shared master document.",
+                "Make every surface—from studio UI to campaign pages—speak the same story.",
+            ],
+            "pillars": ["Prompt-first creation", "Launch-ready deployment", "Creator-first publishing"],
+        },
         "workstreams": [
             {"name": "Studio Creator", "focus": "Prompt-to-experience generation, Luau packaging, and live Studio sync."},
             {"name": "Launch & Deployment", "focus": "Shared env/master-file support, deployment smoke tests, and Railway rollout."},
@@ -200,6 +262,10 @@ def _build_generated_master_document(repo_root: Path | None = None) -> dict[str,
             "backend/main.py",
             "docs/master-document.json",
         ],
+        "contentPreview": [
+            "Shared blueprint for studio.trezzhaus.com, trezzworld-studio-production, and TrezzBLOX creator workflows.",
+            "Cross-surface launch spec for product, marketing, and deployment.",
+        ],
         "extras": {
             "companyVision": company,
             "launchStrategy": launch,
@@ -220,6 +286,40 @@ def _normalize_document_payload(payload: dict[str, Any], path: Path | None, repo
     if not isinstance(payload, dict):
         payload = {"content": payload}
 
+    def _coerce_list(value: Any) -> list[Any]:
+        if isinstance(value, list):
+            return value
+        if isinstance(value, tuple):
+            return list(value)
+        if value is None:
+            return []
+        return [value]
+
+    def _coerce_string_list(value: Any) -> list[str]:
+        return [str(item) for item in _coerce_list(value) if item is not None]
+
+    def _coerce_map(value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        if value is None:
+            return {}
+        return {"value": str(value)}
+
+    def _build_content_preview(raw_content: Any) -> list[str]:
+        if isinstance(raw_content, str):
+            preview: list[str] = []
+            for line in raw_content.splitlines():
+                candidate = line.strip()
+                if not candidate or candidate.startswith("#") or candidate.startswith("<!--"):
+                    continue
+                if candidate.startswith("- ") or candidate.startswith("* "):
+                    preview.append(candidate[2:].strip())
+                    continue
+                if not preview:
+                    preview.append(candidate)
+            return preview[:8]
+        return _coerce_string_list(raw_content)
+
     title = payload.get("title") or payload.get("name") or "TrezzWorld Studio Master Document"
     summary = (
         payload.get("summary")
@@ -233,6 +333,19 @@ def _normalize_document_payload(payload: dict[str, Any], path: Path | None, repo
     repositories = payload.get("repositories") or payload.get("repoTargets") or []
     capabilities = payload.get("capabilities") or []
     launch_checklist = payload.get("launchChecklist") or payload.get("launch_checklist") or []
+    positioning = _coerce_map(payload.get("positioning") or payload.get("positioningSummary"))
+    launch_plan = _coerce_map(payload.get("launchPlan") or payload.get("launch_plan"))
+    marketing = _coerce_map(payload.get("marketing"))
+    audience = _coerce_string_list(payload.get("audience") or positioning.get("audience"))
+    proof_points = _coerce_string_list(payload.get("proofPoints") or positioning.get("proofPoints") or positioning.get("proof_points"))
+    launch_phases = _coerce_list(payload.get("launchPhases") or launch_plan.get("phases"))
+    channels = _coerce_string_list(payload.get("channels") or launch_plan.get("channels"))
+    success_metrics = _coerce_string_list(payload.get("successMetrics") or payload.get("success_metrics") or launch_plan.get("successMetrics"))
+    marketing_narrative = _coerce_string_list(payload.get("marketingNarrative") or marketing.get("narrative"))
+    marketing_pillars = _coerce_string_list(payload.get("marketingPillars") or marketing.get("pillars"))
+    content_preview = _coerce_string_list(payload.get("contentPreview") or payload.get("highlights") or payload.get("sections"))
+    if not content_preview and "content" in payload:
+        content_preview = _build_content_preview(payload.get("content"))
 
     if not isinstance(domains, list):
         domains = [str(domains)] if domains else []
@@ -249,9 +362,22 @@ def _normalize_document_payload(payload: dict[str, Any], path: Path | None, repo
         "title": str(title),
         "summary": str(summary),
         "product": payload.get("product") or "TrezzBLOX Studio Creator",
+        "productSummary": payload.get("productSummary") or payload.get("productDescription") or "",
         "domains": domains,
         "repositories": repositories,
         "mission": payload.get("mission") or summary,
+        "vision": payload.get("vision") or payload.get("visionStatement") or "",
+        "positioning": positioning,
+        "launchPlan": launch_plan,
+        "marketing": marketing,
+        "audience": audience,
+        "proofPoints": proof_points,
+        "launchPhases": launch_phases,
+        "channels": channels,
+        "successMetrics": success_metrics,
+        "marketingNarrative": marketing_narrative,
+        "marketingPillars": marketing_pillars,
+        "contentPreview": content_preview,
         "workstreams": workstreams,
         "capabilities": capabilities,
         "launchChecklist": launch_checklist,
@@ -309,9 +435,22 @@ def build_master_document_status(repo_root: Path | None = None) -> dict[str, Any
         "title": document.get("title", "TrezzWorld Studio Master Document"),
         "summary": document.get("summary", ""),
         "product": document.get("product", "TrezzBLOX Studio Creator"),
+        "productSummary": document.get("productSummary", ""),
         "domains": document.get("domains", []),
         "repositories": document.get("repositories", []),
         "mission": document.get("mission", ""),
+        "vision": document.get("vision", ""),
+        "positioning": document.get("positioning", {}),
+        "launchPlan": document.get("launchPlan", {}),
+        "marketing": document.get("marketing", {}),
+        "audience": document.get("audience", []),
+        "proofPoints": document.get("proofPoints", []),
+        "launchPhases": document.get("launchPhases", []),
+        "channels": document.get("channels", []),
+        "successMetrics": document.get("successMetrics", []),
+        "marketingNarrative": document.get("marketingNarrative", []),
+        "marketingPillars": document.get("marketingPillars", []),
+        "contentPreview": document.get("contentPreview", []),
         "workstreams": document.get("workstreams", []),
         "capabilities": document.get("capabilities", []),
         "launchChecklist": document.get("launchChecklist", []),

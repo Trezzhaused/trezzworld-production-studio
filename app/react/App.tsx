@@ -1220,24 +1220,89 @@ function SettingsTab() {
       <AccountSection />
 
       {masterDocument && (
-        <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 8, padding: 14 }}>
-          <div style={{ color: "#e2e8f0", fontSize: 15, fontWeight: 700, marginBottom: 6 }}>
-            🧭 Master document layer
+        <div style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
+            <div>
+              <div style={{ color: "#e2e8f0", fontSize: 15, fontWeight: 700 }}>🧭 Master document layer</div>
+              <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 4 }}>{masterDocument.summary}</div>
+            </div>
+            <div style={{ color: "#38bdf8", fontSize: 12, fontWeight: 700, textAlign: "right" }}>{masterDocument.product || STUDIO_PRODUCT_NAME}</div>
           </div>
-          <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 8 }}>{masterDocument.summary}</div>
-          <div style={{ color: "#38bdf8", fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{masterDocument.title}</div>
-          <div style={{ color: "#64748b", fontSize: 11, marginBottom: 8 }}>
-            Domains: {masterDocument.domains?.join(", ") || "n/a"}
-          </div>
+
+          <div style={{ color: "#38bdf8", fontSize: 12, fontWeight: 600 }}>{masterDocument.title}</div>
+
+          {masterDocument.mission && (
+            <div style={{ color: "#64748b", fontSize: 11 }}>
+              Mission: {masterDocument.mission}
+            </div>
+          )}
+
+          {masterDocument.positioning?.headline && (
+            <div style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>{masterDocument.positioning.headline}</div>
+          )}
+          {masterDocument.positioning?.tagline && (
+            <div style={{ color: "#94a3b8", fontSize: 11 }}>{masterDocument.positioning.tagline}</div>
+          )}
+
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {masterDocument.workstreams?.slice(0, 3).map((item: any, index: number) => (
-              <span key={`${item.name}-${index}`} style={{ background: "#0f172a", border: "1px solid #1e3a5f", borderRadius: 999, padding: "4px 8px", color: "#94a3b8", fontSize: 10 }}>
-                {item.name}
+            {masterDocument.domains?.slice(0, 4).map((domain: string, index: number) => (
+              <span key={`${domain}-${index}`} style={{ background: "#0f172a", border: "1px solid #1e3a5f", borderRadius: 999, padding: "4px 8px", color: "#94a3b8", fontSize: 10 }}>
+                {domain}
+              </span>
+            ))}
+            {masterDocument.repositories?.slice(0, 4).map((repo: string, index: number) => (
+              <span key={`${repo}-${index}`} style={{ background: "#0f172a", border: "1px solid rgba(56, 189, 248, 0.28)", borderRadius: 999, padding: "4px 8px", color: "#38bdf8", fontSize: 10 }}>
+                {repo}
               </span>
             ))}
           </div>
+
+          {masterDocument.audience?.length > 0 && (
+            <div>
+              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", marginBottom: 4 }}>Audience</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {masterDocument.audience.map((item: string, index: number) => (
+                  <span key={`${item}-${index}`} style={{ background: "#0f172a", border: "1px solid #1e3a5f", borderRadius: 999, padding: "4px 8px", color: "#94a3b8", fontSize: 10 }}>{item}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {masterDocument.marketingPillars?.length > 0 && (
+            <div>
+              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", marginBottom: 4 }}>Marketing pillars</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {masterDocument.marketingPillars.map((item: string, index: number) => (
+                  <span key={`${item}-${index}`} style={{ background: "#0f172a", border: "1px solid #1e3a5f", borderRadius: 999, padding: "4px 8px", color: "#94a3b8", fontSize: 10 }}>{item}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {masterDocument.contentPreview?.length > 0 && (
+            <div>
+              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", marginBottom: 4 }}>Preview</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {masterDocument.contentPreview.slice(0, 4).map((item: string, index: number) => (
+                  <div key={`${item}-${index}`} style={{ color: "#94a3b8", fontSize: 11, lineHeight: 1.5 }}>{item}</div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {masterDocument.launchChecklist?.length > 0 && (
+            <div>
+              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", marginBottom: 4 }}>Launch checklist</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {masterDocument.launchChecklist.slice(0, 4).map((item: string, index: number) => (
+                  <div key={`${item}-${index}`} style={{ color: "#94a3b8", fontSize: 11 }}>{item}</div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {masterDocument.source && (
-            <div style={{ color: "#475569", fontSize: 10, marginTop: 8 }}>Source: {masterDocument.source}</div>
+            <div style={{ color: "#475569", fontSize: 10 }}>Source: {masterDocument.source}</div>
           )}
         </div>
       )}
