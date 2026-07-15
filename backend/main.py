@@ -54,6 +54,12 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(Exception)
+async def handle_unexpected_exception(request: Request, exc: Exception):
+    logger.exception("Unhandled exception for %s %s", request.method, request.url.path)
+    return JSONResponse({"detail": "Internal server error."}, status_code=500)
+
+
 def _sanitize_lumi_output(content: str | None) -> str:
     if not content:
         return ""
