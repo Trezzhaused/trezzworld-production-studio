@@ -109,13 +109,25 @@ def _config_status() -> dict[str, Any]:
         or os.environ.get("ENV_FILE")
         or os.environ.get("DOTENV_PATH")
     )
+    launch_ready = not missing_required and bool(ffmpeg_path) and (not auth_required or api_key_configured)
     warnings = [
         "Install ffmpeg and ensure it is on PATH or set FFMPEG_PATH to make video/audio generation work end-to-end.",
     ] if not ffmpeg_path else []
     if auth_required and not api_key_configured:
         warnings.append("AUTH_REQUIRED is enabled but no LUMI_API_KEY is configured; authenticated requests will fail until a key or SSO token is available.")
     return {
-        "ok": not missing_required and bool(ffmpeg_path) and (not auth_required or api_key_configured),
+        "ok": launch_ready,
+        "product": {
+            "name": "TrezzBLOX Studio Creator",
+            "launchReady": launch_ready,
+            "platform": "Roblox Studio + live sync + publishing",
+            "highlights": [
+                "Prompt-driven experience generation",
+                "Luau packaging and Rojo export",
+                "Live Studio sync and publishing workflows",
+                "Human-in-the-loop launch checklist",
+            ],
+        },
         "ffmpeg": {
             "configured": bool(ffmpeg_path),
             "path": ffmpeg_path,
@@ -141,6 +153,16 @@ def _config_status() -> dict[str, Any]:
             "deploymentSmokeTest": True,
             "observabilityConfigured": bool(os.environ.get("SENTRY_DSN") or os.environ.get("LOGTAIL_TOKEN") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")),
             "compliancePages": True,
+            "studioCreator": {
+                "productName": "TrezzBLOX Studio Creator",
+                "launchReady": launch_ready,
+                "capabilities": [
+                    "Prompt-to-experience generation",
+                    "Live Studio sync",
+                    "Publishing and monetization",
+                    "Launch checklist",
+                ],
+            },
         },
         "warnings": warnings,
     }

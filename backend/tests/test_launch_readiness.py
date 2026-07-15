@@ -23,6 +23,9 @@ class LaunchReadinessTests(unittest.TestCase):
             self.assertTrue(status["auth"]["required"])
             self.assertTrue(status["auth"]["apiKeyConfigured"])
             self.assertEqual(status["auth"]["rateLimitPerMinute"], 120)
+            self.assertEqual(status["product"]["name"], "TrezzBLOX Studio Creator")
+            self.assertTrue(status["product"]["launchReady"])
+            self.assertEqual(status["launchReadiness"]["studioCreator"]["productName"], "TrezzBLOX Studio Creator")
 
     def test_config_status_flags_missing_auth_for_production(self):
         with patch.dict(
@@ -40,6 +43,8 @@ class LaunchReadinessTests(unittest.TestCase):
             self.assertTrue(status["auth"]["required"])
             self.assertFalse(status["auth"]["apiKeyConfigured"])
             self.assertTrue(any("AUTH_REQUIRED" in warning for warning in status["warnings"]))
+            self.assertFalse(status["product"]["launchReady"])
+            self.assertFalse(status["launchReadiness"]["studioCreator"]["launchReady"])
 
 
 if __name__ == "__main__":

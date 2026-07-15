@@ -1,7 +1,7 @@
 {
   "name": "trezzworld-production-studio",
   "version": "0.1.0-alpha",
-  "description": "TrezzWorld Production Studio – offline-first creative suite",
+  "description": "TrezzBLOX Studio Creator – offline-first creative suite",
   "private": true,
   "main": "dist/electron/main.js",
   "scripts": {

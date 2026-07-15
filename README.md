@@ -1,6 +1,6 @@
-# TrezzWorld Production Studio
+# TrezzBLOX Studio Creator
 
-AI-powered creative studio. Live at https://studio.trezzhaus.com
+AI-powered creative studio for building Roblox experiences. Live at https://studio.trezzhaus.com
 
 ## Status
 - Backend: Running

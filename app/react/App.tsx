@@ -44,6 +44,8 @@ interface MusicJob {
 }
 
 const API = "/api";
+const STUDIO_PRODUCT_NAME = "TrezzBLOX Studio Creator";
+const STUDIO_PRODUCT_SHORT = "TrezzBLOX";
 
 // ── Production style config ───────────────────────────────────────────────────
 
@@ -1726,7 +1728,7 @@ function RobloxTab() {
             <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
               <button
                 type="button"
-                aria-label="Start building your Roblox experience"
+                aria-label={`Start building your ${STUDIO_PRODUCT_SHORT} experience`}
                 onClick={() => document.getElementById("roblox-creator-form")?.scrollIntoView({ behavior: "smooth", block: "start" })}
                 style={{ ...btnStyle(true), background: "#fff", color: "#111827", padding: "10px 16px" }}
               >
@@ -1769,7 +1771,7 @@ function RobloxTab() {
         <div id="roblox-creator-form" style={{ background: "#0a0f1a", border: "1px solid #1e3a5f", borderRadius: 18, padding: 18 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
             <div>
-              <div style={{ color: "#e2e8f0", fontSize: 16, fontWeight: 700 }}>Create a Roblox experience</div>
+              <div style={{ color: "#e2e8f0", fontSize: 16, fontWeight: 700 }}>Create a {STUDIO_PRODUCT_NAME} experience</div>
               <div style={{ color: "#64748b", fontSize: 12, marginTop: 2 }}>Start from a template or type your own idea.</div>
             </div>
             <div style={{ color: "#38bdf8", fontSize: 12, fontWeight: 700 }}>Prompt-first workflow</div>
@@ -2192,7 +2194,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "video",    label: "Video",    icon: "🎬" },
   { id: "music",    label: "Music",    icon: "🎵" },
   { id: "lumi",     label: "LUMI",     icon: "🤖" },
-  { id: "roblox",   label: "Roblox",   icon: "🎮" },
+  { id: "roblox",   label: STUDIO_PRODUCT_SHORT,   icon: "🎮" },
   { id: "settings", label: "Settings", icon: "⚙" },
 ];
 
