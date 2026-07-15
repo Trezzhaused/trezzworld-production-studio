@@ -41,6 +41,34 @@ jobs:
       - name: Build application
         run: npm run build
 
+      - name: Checkout shared Master-File repo
+        if: ${{ secrets.MASTER_FILE_REPOSITORY != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.MASTER_FILE_REPOSITORY }}
+          token: ${{ secrets.MASTER_FILE_TOKEN }}
+          ref: ${{ secrets.MASTER_FILE_REF || 'main' }}
+          path: .master-file-repo
+
+      - name: Prepare deployment environment from shared master file
+        env:
+          MASTER_FILE_REPOSITORY: ${{ secrets.MASTER_FILE_REPOSITORY }}
+          MASTER_FILE_TOKEN: ${{ secrets.MASTER_FILE_TOKEN }}
+          MASTER_FILE_REF: ${{ secrets.MASTER_FILE_REF }}
+          MASTER_FILE: ${{ secrets.MASTER_FILE }}
+          MASTER_ENV_FILE: ${{ secrets.MASTER_ENV_FILE }}
+          SHARED_ENV_FILE: ${{ secrets.SHARED_ENV_FILE }}
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+          DOTENV_PATH: ${{ secrets.DOTENV_PATH }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT: ${{ secrets.RAILWAY_ENVIRONMENT }}
+          PRODUCTION_URL: ${{ secrets.PRODUCTION_URL }}
+        run: |
+          python ./scripts/prepare_deployment_env.py --output "$GITHUB_ENV"
+
       - name: Start backend for smoke tests
         run: |
           python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 > /tmp/trezzworld-backend.log 2>&1 &
@@ -69,12 +97,6 @@ jobs:
 
       # ── 4. Validate Railway secrets before attempting deployment ──────────
       - name: Validate Railway secrets
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE }}
-          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
-          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
-          RAILWAY_ENVIRONMENT: ${{ secrets.RAILWAY_ENVIRONMENT }}
         run: |
           if [ -z "$RAILWAY_TOKEN" ]; then
             echo "::error::RAILWAY_TOKEN secret is not configured."
@@ -110,10 +132,6 @@ jobs:
 
       # ── 5. Deploy to Railway (builds Dockerfile automatically) ────────────
       - name: Deploy via Railway
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
-          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
         run: |
           DEPLOY_ARGS=(--service "$TARGET_SERVICE" --detach)
           DEPLOY_ARGS=(--environment "$TARGET_ENVIRONMENT" "${DEPLOY_ARGS[@]}")
@@ -121,8 +139,6 @@ jobs:
           railway up "${DEPLOY_ARGS[@]}"
 
       - name: Verify production health
-        env:
-          PRODUCTION_URL: ${{ secrets.PRODUCTION_URL }}
         run: |
           TARGET_URL="${PRODUCTION_URL:-https://app.trezzhaus.com}"
           echo "Checking $TARGET_URL/api/health"
