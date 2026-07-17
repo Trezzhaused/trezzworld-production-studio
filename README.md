@@ -16,13 +16,9 @@ AI-powered creative studio for building Roblox experiences. Live at https://stud
 - Rollback guidance: see `docs/launch-readiness.md`
 
 ## Roblox Studio MCP connection
-A workspace MCP configuration is available at `.vscode/mcp.json` for Windows-based Roblox Studio workflows. It exposes a `Roblox_Studio` server entry that launches the Roblox MCP batch file from `%LOCALAPPDATA%\Roblox` with:
+A workspace MCP configuration is available at `.vscode/mcp.json` for Windows-based Roblox Studio workflows. The `Roblox_Studio` server entry is currently disabled until you’re ready to connect it, so the file is intentionally empty for now.
 
-```bat
-cmd.exe /c cd /d %LOCALAPPDATA%\Roblox && .\mcp.bat
-```
-
-If your Roblox MCP launcher is installed under a different path, update the command in `.vscode/mcp.json` before connecting the server from your MCP client.
+When you are ready, you can re-enable the connection by restoring the `Roblox_Studio` entry and pointing it to the correct Roblox MCP launcher path if needed.
 
 ## Shared master document layer
 - A starter shared document lives at `docs/master-document.json`.
